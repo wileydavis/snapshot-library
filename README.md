@@ -69,7 +69,9 @@ SF-000 is not a browser, so it signs in with a service token.
    Copy the **Client ID** and **Client Secret** now: the secret is shown once.
 2. Back in the application from step 2, add a second policy: action **Service Auth** (not
    *Allow*, or Access asks SF-000 to log in), include **Service Token** = `SF-000`.
-3. The two strings go into SF-000's ONLINE setup, on your Mac only. They never go in a repo.
+3. In SF-000: the library screen → **SET UP**. Enter `https://snapshots.drosaka.com` and the two
+   strings, press CHECK, then KEEP, and light **ONLINE**. The strings stay on your Mac; they
+   never go in a repo.
 
 SF-000 then sends `CF-Access-Client-Id` and `CF-Access-Client-Secret` with each request.
 
@@ -100,6 +102,9 @@ npm run dev              # http://localhost:8787, no login, local storage
 npm test                 # the index's summary of a snapshot, the page's ordering, the Access gate
 npm run test:live        # the whole path against the running dev server, with real SF-000 snapshots
 SEED=1 npm run test:live # the same, leaving sixty made-up snapshots to look at
+
+# SF-000's own sender against this server (from the SF-000 repo, with `npm run dev` running here):
+#   build/SF000_artefacts/Release/SF-000 --onlinetest http://127.0.0.1:8787
 ```
 
 ## Files
@@ -117,7 +122,7 @@ test/                  the tests, and snapshots as SF-000 0.1.0 writes them
 
 ## Not built yet
 
-- SF-000's side: the ONLINE key that sends each snapshot as it is taken, and loading a library file.
+- SF-000 loading a library file made here.
 - Buckets and snapshot knobs built here and sent back to the instrument.
 - Deeper listening: likeness learned from the clips, comparison with reference tracks, a map laid
   out by likeness.
