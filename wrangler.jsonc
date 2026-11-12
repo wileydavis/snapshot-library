@@ -1,0 +1,41 @@
+{
+  // Snapshot Library: a private catalog of SF-000 snapshots.
+  // Deploy: see README.md
+  "name": "snapshot-library",
+  "main": "src/worker.js",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // Only reachable through the custom domain, which sits behind Cloudflare Access.
+  // (A workers.dev URL would bypass Access, so it stays off.)
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [
+    { "pattern": "snapshots.drosaka.com", "custom_domain": true }
+  ],
+
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*"]
+  },
+
+  // No ids here on purpose: the first deploy makes the bucket and the database by these names
+  // (Wrangler's automatic provisioning), and later deploys find them again.
+  "r2_buckets": [
+    { "binding": "BUCKET", "bucket_name": "snapshot-library" }
+  ],
+
+  "d1_databases": [
+    { "binding": "DB", "database_name": "snapshot-library" }
+  ],
+
+  "vars": {
+    // ACCESS_AUD comes from the Access application for this site (README step 2). Until it is
+    // filled in, every API call is refused.
+    "ACCESS_TEAM_DOMAIN": "tiny-boat-3c4f.cloudflareaccess.com",
+    "ACCESS_AUD": "",
+    // Never set to "true" in production. Used only for local `wrangler dev`.
+    "ALLOW_UNAUTHENTICATED": "false"
+  }
+}

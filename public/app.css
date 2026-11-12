@@ -1,0 +1,80 @@
+/* SF-000's own colours and lettering: putty panels on sea grey, black frames, colour only where
+   it says something. */
+@font-face { font-family: "Barlow Condensed"; font-weight: 500; src: url("fonts/BarlowCondensed-Medium.ttf"); font-display: block; }
+@font-face { font-family: "Barlow Condensed"; font-weight: 600; src: url("fonts/BarlowCondensed-SemiBold.ttf"); font-display: block; }
+@font-face { font-family: "Barlow Semi Condensed"; font-weight: 500; src: url("fonts/BarlowSemiCondensed-Medium.ttf"); font-display: block; }
+
+:root {
+  --putty: #CFC8BC; --grey: #ABACA7; --bluegrey: #A4B1B7; --sea: #8D9794; --white: #E8E5E1; --black: #2B2B28;
+  --green: #428F47; --red: #B54142; --amber: #C5843F; --yellow: #D7C352; --unlit: #4D514E; --lit: #E9E6E2;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--black); color: var(--black); font: 500 13px/1.25 "Barlow Semi Condensed", sans-serif; letter-spacing: 0.04em; }
+button, input, select, textarea { font: inherit; letter-spacing: inherit; color: inherit; border-radius: 0; }
+
+.frame { height: 100%; display: flex; flex-direction: column; padding: 8px; gap: 0; }
+.bar { background: var(--bluegrey); display: flex; align-items: center; gap: 12px; padding: 6px 16px; border-radius: 8px 8px 0 0; border-bottom: 1px solid var(--black); flex-wrap: wrap; }
+.body { flex: 1; min-height: 0; background: var(--sea); display: flex; gap: 14px; padding: 14px 16px; }
+.strip { background: var(--putty); border: 1px solid var(--black); margin: 0; padding: 8px 14px; display: flex; align-items: center; gap: 14px; border-radius: 0 0 8px 8px; flex-wrap: wrap; }
+.grow { flex: 1; }
+
+.plate { display: inline-block; padding: 3px 9px; font: 600 15px/1.2 "Barlow Condensed", sans-serif; letter-spacing: 0.06em; white-space: nowrap; }
+.plate.white { background: var(--white); color: var(--black); }
+.plate.black { background: var(--black); color: var(--lit); }
+.plate.big { font-size: 26px; padding: 0 12px; letter-spacing: 0.02em; }
+.legend { font: 600 12px/1.2 "Barlow Condensed", sans-serif; letter-spacing: 0.1em; margin: 10px 0 4px; }
+.small { font-size: 11px; letter-spacing: 0.06em; word-break: break-all; }
+.status { font: 600 12px/1.2 "Barlow Condensed", sans-serif; letter-spacing: 0.1em; flex: 1; }
+
+.field { display: flex; align-items: stretch; background: var(--white); border: 1px solid var(--black); }
+.field > span { background: var(--black); color: var(--lit); font: 600 12px/1 "Barlow Condensed", sans-serif; letter-spacing: 0.1em; padding: 0 7px; display: flex; align-items: center; }
+.field input, .field select, .field textarea { border: 0; background: transparent; padding: 5px 8px; outline: none; min-width: 0; text-transform: uppercase; }
+.field input { width: 200px; }
+.field.wide { margin-top: 8px; }
+.field.wide input, .field.wide textarea { flex: 1; width: auto; resize: vertical; }
+.field:focus-within { outline: 2px solid var(--black); outline-offset: 1px; }
+
+/* A key: a square that lights, with its name beside it. */
+.key { display: inline-flex; align-items: center; gap: 7px; background: none; border: 0; padding: 0; cursor: pointer; font: 600 12px/1 "Barlow Condensed", sans-serif; letter-spacing: 0.1em; }
+.key i { width: 26px; height: 26px; background: var(--white); border: 2px solid var(--black); display: block; }
+.key[aria-pressed="true"] i { background: var(--yellow); }
+#play[aria-pressed="true"] i { background: var(--green); }
+.key.danger[aria-pressed="true"] i { background: var(--red); }
+.key:disabled { opacity: 0.35; cursor: default; }
+.key:focus-visible i, .card:focus-visible { outline: 2px solid var(--black); outline-offset: 2px; }
+.row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 8px; }
+.row.head { margin-top: 0; justify-content: space-between; }
+
+.grid { flex: 1; min-width: 0; overflow-y: auto; display: grid; grid-template-columns: repeat(auto-fill, 272px); grid-auto-rows: 66px; gap: 10px; align-content: start; padding-right: 4px; }
+.card { width: 272px; height: 66px; padding: 0; border: 0; background: none; cursor: pointer; display: block; }
+.card canvas { width: 272px; height: 66px; display: block; }
+.empty { grid-column: 1 / -1; background: var(--putty); border: 1px solid var(--black); padding: 14px 16px; font: 600 13px/1.5 "Barlow Condensed", sans-serif; letter-spacing: 0.1em; max-width: 560px; }
+
+.side { width: 364px; flex: none; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
+.panel { background: var(--putty); border: 1px solid var(--black); padding: 10px 12px 12px; }
+.panel > .legend:first-child { margin-top: 0; }
+
+.map { display: grid; grid-template-columns: 46px repeat(4, 1fr); gap: 4px; align-items: stretch; }
+.map .lab { font: 600 11px/1 "Barlow Condensed", sans-serif; letter-spacing: 0.08em; display: flex; align-items: center; }
+.map .lab.top { justify-content: center; padding-bottom: 2px; }
+.map button { height: 40px; border: 2px solid var(--black); background: var(--white); cursor: pointer; padding: 0; position: relative; font: 600 15px/1 "Barlow Condensed", sans-serif; }
+.map button .sw { position: absolute; left: 0; right: 0; bottom: 0; height: 6px; }
+.map button[aria-pressed="true"] { background: var(--black); color: var(--lit); }
+.map button.none { color: var(--grey); }
+
+.bars { display: grid; grid-template-columns: 78px 1fr; gap: 3px 8px; align-items: center; margin-top: 10px; }
+.bars span { font: 600 11px/1 "Barlow Condensed", sans-serif; letter-spacing: 0.08em; }
+.bars div { height: 10px; background: var(--white); border: 1px solid var(--black); }
+.bars div b { display: block; height: 100%; background: var(--black); }
+.plates { display: flex; gap: 6px; flex-wrap: wrap; min-height: 22px; }
+.links a { color: var(--black); font: 600 12px/1 "Barlow Condensed", sans-serif; letter-spacing: 0.1em; padding: 6px 9px; border: 2px solid var(--black); background: var(--white); text-decoration: none; }
+.links a[aria-disabled="true"] { opacity: 0.35; pointer-events: none; }
+
+@media (max-width: 860px) {
+  .frame { height: auto; min-height: 100%; }
+  .body { flex-direction: column; }
+  .side { width: auto; order: -1; overflow: visible; }
+  .grid { overflow: visible; grid-template-columns: repeat(auto-fill, minmax(272px, 1fr)); justify-items: center; }
+  .field input { width: 130px; }
+}

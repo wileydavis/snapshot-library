@@ -1,0 +1,15 @@
+{
+  "name": "snapshot-library",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev -c wrangler.dev.jsonc --port 8787",
+    "deploy": "wrangler deploy",
+    "test": "node test/unit.test.mjs && node test/auth.test.mjs",
+    "test:live": "node test/live.test.mjs"
+  },
+  "devDependencies": {
+    "wrangler": "^4.158.0"
+  }
+}
