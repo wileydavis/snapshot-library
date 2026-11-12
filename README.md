@@ -48,10 +48,11 @@ Until step 2 is done every API call is refused. That is deliberate.
 
 ### 2. Lock it to you with Cloudflare Access
 
-1. **Zero Trust** → **Access** → **Applications** → *Add an application* → *Self-hosted*.
+1. **Zero Trust** → **Access controls** → **Applications** → add an application → *Self-hosted*.
 2. Domain: `snapshots.drosaka.com`. Session duration: something long, like 1 month.
 3. Policy: *Allow*, **Emails** = your address.
-4. Save, open the application, and copy its **Application Audience (AUD) Tag**.
+4. Save, select **Configure** on the application, and copy its **Application Audience (AUD) Tag**
+   (under *Additional settings*; on some dashboards the first tab).
 5. Put it in `wrangler.jsonc` → `vars` → `ACCESS_AUD`, and push. (`ACCESS_TEAM_DOMAIN` is already
    the team the sound library uses.)
 
@@ -62,10 +63,12 @@ on every API call, and the `workers.dev` address is off, so nothing reaches the 
 
 SF-000 is not a browser, so it signs in with a service token.
 
-1. **Zero Trust** → **Access** → **Service Auth** → *Create Service Token*. Name it `SF-000`.
+1. **Zero Trust** → **Access controls** → **Service credentials** → **Service Tokens** →
+   *Create Service Token*. Name it `SF-000` and give it a long duration: when it runs out,
+   SF-000 stops getting through until the token is refreshed.
    Copy the **Client ID** and **Client Secret** now: the secret is shown once.
-2. Back in the application from step 2, add a second policy: action **Service Auth**, include
-   **Service Token** = `SF-000`.
+2. Back in the application from step 2, add a second policy: action **Service Auth** (not
+   *Allow*, or Access asks SF-000 to log in), include **Service Token** = `SF-000`.
 3. The two strings go into SF-000's ONLINE setup, on your Mac only. They never go in a repo.
 
 SF-000 then sends `CF-Access-Client-Id` and `CF-Access-Client-Secret` with each request.
