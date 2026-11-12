@@ -31,10 +31,10 @@
   ],
 
   "vars": {
-    // ACCESS_AUD comes from the Access application for this site (README step 2). Until it is
-    // filled in, every API call is refused.
+    // ACCESS_AUD is the Access application for this site (README step 2). Without it every API
+    // call is refused.
     "ACCESS_TEAM_DOMAIN": "tiny-boat-3c4f.cloudflareaccess.com",
-    "ACCESS_AUD": "",
+    "ACCESS_AUD": "7b3dc387840d6cc1fed6f5b1b5f2468502702e9fff1dab91eae4cc38ab6153f9",
     // Never set to "true" in production. Used only for local `wrangler dev`.
     "ALLOW_UNAUTHENTICATED": "false"
   }
