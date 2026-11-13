@@ -26,7 +26,7 @@ sound, through amber and yellow, to white), so the side of a pile shows what is 
 | Drag a chip onto **+ NEW STACK** | a new stack of it |
 | Drag a chip along the table | put the open stack in order (a stack of your own, with ORDER on AS IT IS STACKED) |
 | **Backspace**, or TAKE OUT | take the chosen chip out of the open stack. It stays in the library |
-| Drag a stack by its pocket into the tray | SF-000 takes it at LOAD. Dragged out again, it does not. TO SF-000 on the bar does the same |
+| Drag a stack by its pocket into the tray | SF-000 takes it at LOAD (the key beside SET UP on its library screen). Dragged out again, it is gone from the instrument at the next LOAD; its chips stay there. TO SF-000 on the bar does the same |
 | Drag a chip onto a knob bay | add it to that knob's macro, or make one there |
 | Drag a macro from its bay to another | move it to that knob |
 | The wheel | over the table, moves through the open stack; over the rack, turns its rows |
@@ -198,8 +198,9 @@ changed or dropped, so a deploy cannot take a snapshot, a tag or a stack with it
 
 ## Not built yet
 
-- **SF-000's LOAD key.** The tray and `GET /api/load` are here; the instrument does not ask yet.
-  Until it does, EXPORT's library file is the only way out, and SF-000 does not read that either.
+- SF-000 does not read EXPORT's library file. Its **LOAD** takes the tray instead (the stacks,
+  the chips it lacks, macros onto knobs that hold nothing, a song as the arrangement if it has
+  none); the file is for other tools.
 - **Putting chips away from the instrument.** A snapshot can name a sample that is only on the
   Mac. Samples have to be kept here (by their SHA-256, which the session already has) before the
   instrument can safely let go of a chip.
