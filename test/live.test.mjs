@@ -112,8 +112,95 @@ assert.equal(r.gone, undefined);
 assert.equal((await j(`/api/snapshots/${stranger.uid}`)).status, 200);
 assert.equal((await j(`/api/snapshots/${stranger.uid}?forget=1`, 'DELETE')).status, 200);
 
+// 12. a name has two hands on it: the page's stands until SF-000 renames it there
+r = await (await j(`/api/snapshots/${real.uid}`, 'PATCH', { name: '  Night Roller  ' })).json();
+assert.equal(r.name, 'Night Roller');
+assert.equal(r.snapshot.name, 'ROLLER', 'the snapshot as it last arrived is not rewritten');
+r = await (await j('/api/export', 'POST', { uids: [real.uid] })).json();
+assert.equal(r.snapshots[0].name, 'Night Roller', 'a library file has it under the name it has now');
+r = await (await j('/api/snapshots', 'POST', { snapshot: { ...real, name: 'ROLLER' } })).json();          // SF-000 catching up, with the name it had (test 4)
+assert.equal(r.name, 'Night Roller', 'sent again with the name it had there: the name given here stands');
+r = await (await j('/api/snapshots', 'POST', { snapshot: { ...real, name: 'RENAMED THERE' } })).json();
+assert.equal(r.name, 'RENAMED THERE', 'renamed in SF-000 since: that is its name');
+assert.equal((await (await j(`/api/snapshots/${real.uid}`)).json()).tags.join(','), 'dark,rolling', 'and its tags are as they were');
+assert.equal((await j(`/api/snapshots/${real.uid}`, 'PATCH', { name: '   ' })).status, 400, 'no name is not a name');
+
+// 13. tags on many at once
+r = await (await j('/api/tags', 'POST', { uids: [real.uid, many[0].uid, many[1].uid, 'ffffffffffffffff-missing'], add: ['Set A', 'dark'], remove: ['rolling'] })).json();
+assert.deepEqual(r.tags, { [real.uid]: ['dark', 'set a'], [many[0].uid]: ['set a', 'dark'], [many[1].uid]: ['set a', 'dark'] });
+assert.equal((await j('/api/tags', 'POST', { uids: [real.uid] })).status, 400);
+
+// 14. stacks: made, filled, put in order, renamed, removed and put back
+for (const id of ['teststack001', 'testmacro001', 'testmacro002', 'testsong0001', 'testrule0001']) await j(`/api/stacks/${id}?forget=1`, 'DELETE');
+const u = many.map((s) => s.uid);
+let stack = await (await j('/api/stacks', 'POST', { id: 'teststack001', name: 'ROLLERS', items: [u[0], u[1], u[0], 'not a uid', { u: u[2], bars: 4 }] })).json();
+assert.equal(stack.id, 'teststack001');
+assert.equal(stack.kind, 'stack');
+assert.deepEqual(stack.items, [{ u: u[0] }, { u: u[1] }, { u: u[2] }], 'a chip once, in the order given');
+assert.equal(stack.load, false);
+r = await (await j('/api/stacks', 'POST', { id: 'teststack001', name: 'SENT TWICE' })).json();
+assert.equal(r.name, 'ROLLERS', 'made twice is one stack, as it was');
+stack = await (await j('/api/stacks/teststack001', 'PATCH', { name: 'DEEP ROLLERS', items: [u[2], u[0], u[3]], load: true })).json();
+assert.deepEqual([stack.name, stack.load, stack.items.map((x) => x.u)], ['DEEP ROLLERS', true, [u[2], u[0], u[3]]]);
+assert.equal((await j('/api/stacks/teststack001', 'PATCH', { nothing: 1 })).status, 400);
+assert.equal((await j('/api/stacks/nosuchstack1', 'PATCH', { name: 'x' })).status, 404);
+assert.equal((await j('/api/stacks/NOT-AN-ID', 'PATCH', { name: 'x' })).status, 400);
+const made1 = await (await j('/api/stacks', 'POST', { name: 'NAMED BY THE LIBRARY' })).json();
+assert.match(made1.id, /^[0-9a-z]{12}$/, 'with no id given it is given one');
+assert.ok(made1.pos > stack.pos, 'and stands after the last');
+await j(`/api/stacks/${made1.id}?forget=1`, 'DELETE');
+
+// a macro is a knob's chips in sweep order; a knob holds one macro
+let macro = await (await j('/api/stacks', 'POST', { id: 'testmacro001', name: 'LIFT', kind: 'macro', items: [u[4], u[5], u[6]], depth: 0.8, slot: 3 })).json();
+assert.deepEqual([macro.kind, macro.slot, macro.depth, macro.items.length], ['macro', 3, 0.8, 3]);
+await j('/api/stacks', 'POST', { id: 'testmacro002', name: 'DROP', kind: 'macro', items: [u[7], u[8]], slot: 3 });
+macro = await (await j('/api/stacks/testmacro001')).json();
+assert.equal(macro.slot, null, 'the knob went to the macro put on it last');
+await j('/api/stacks/testmacro001', 'PATCH', { slot: 5 });
+// a song is parts in a line; the same chip may come round again
+const song = await (await j('/api/stacks', 'POST', { id: 'testsong0001', name: 'FRIDAY', kind: 'song', load: true, items: [{ u: u[0], bars: 16 }, { u: u[9], bars: 32, morph: 4 }, { u: u[0], bars: 8, morph: 0.5 }] })).json();
+assert.deepEqual(song.items, [{ u: u[0], bars: 16, morph: 0 }, { u: u[9], bars: 32, morph: 4 }, { u: u[0], bars: 8, morph: 0.5 }]);
+// a rule stack keeps its rule, and what it held when the page last looked
+const rule = await (await j('/api/stacks', 'POST', { id: 'testrule0001', name: 'LIKE MADE 001', kind: 'rule', rule: { type: 'like', uid: u[0], n: 4 }, items: [u[0], u[10], u[11]] })).json();
+assert.deepEqual(rule.rule, { type: 'like', uid: u[0], n: 4 });
+let listedStacks = (await (await j('/api/stacks')).json()).stacks;
+assert.deepEqual(listedStacks.filter((x) => x.id.startsWith('test')).map((x) => x.id), ['teststack001', 'testmacro001', 'testmacro002', 'testsong0001', 'testrule0001'], 'in the order they stand');
+
+// 15. what SF-000 takes at LOAD: the tray's stacks with the chips they hold now, the macros on their knobs
+await j(`/api/snapshots/${u[3]}`, 'DELETE');                                // (one of DEEP ROLLERS' chips is removed from the library)
+let tray = await (await j('/api/load')).json();
+assert.equal(tray.load, 1);
+const mineOnly = (list) => list.filter((x) => x.id.startsWith('test'));
+assert.deepEqual(mineOnly(tray.stacks).map((x) => [x.id, x.name, x.kind, x.uids]), [
+  ['teststack001', 'DEEP ROLLERS', 'stack', [u[2], u[0]]],
+  ['testsong0001', 'FRIDAY', 'song', [u[0], u[9], u[0]]],
+], 'the stacks in the tray, in order, without the chip that has gone; the rule stack was not put in it');
+assert.deepEqual(mineOnly(tray.stacks)[1].parts, [{ uid: u[0], bars: 16, morph: 0 }, { uid: u[9], bars: 32, morph: 4 }, { uid: u[0], bars: 8, morph: 0.5 }]);
+assert.deepEqual(mineOnly(tray.knobs).map((x) => [x.id, x.slot, x.name, x.depth, x.uids]), [
+  ['testmacro001', 5, 'LIFT', 0.8, [u[4], u[5], u[6]]],
+  ['testmacro002', 3, 'DROP', null, [u[7], u[8]]],
+], 'a macro is in the tray when it has a knob');
+assert.deepEqual(tray.chips[u[0]], { name: many[0].name, clip: true, tags: ['set a', 'dark'], at: tray.chips[u[0]].at });
+assert.equal(tray.chips[u[2]].clip, false);
+assert.ok(!tray.chips[u[3]] && !tray.chips[u[10]], 'only the chips the tray holds');
+await j(`/api/snapshots/${u[3]}?forget=1`, 'DELETE');
+await j('/api/snapshots', 'POST', { snapshot: many[3] });
+
+// removed: out of the list and the tray, and put back as it was
+assert.equal((await j('/api/stacks/teststack001', 'DELETE')).status, 200);
+assert.equal((await j('/api/stacks/teststack001')).status, 404);
+assert.equal((await j('/api/stacks/teststack001', 'PATCH', { name: 'x' })).status, 404);
+assert.ok(!(await (await j('/api/stacks')).json()).stacks.some((x) => x.id === 'teststack001'));
+assert.ok((await (await j('/api/stacks?removed=1')).json()).stacks.some((x) => x.id === 'teststack001'), 'it is among the removed');
+tray = await (await j('/api/load')).json();
+assert.ok(!tray.stacks.some((x) => x.id === 'teststack001'));
+stack = await (await j('/api/stacks/teststack001', 'PATCH', { restore: true })).json();
+assert.deepEqual([stack.name, stack.items.map((x) => x.u), stack.load], ['DEEP ROLLERS', [u[2], u[0], u[3]], false], 'put back: its name and chips as they were, out of the tray');
+
 const st = await (await j('/api/stats')).json();
 assert.ok(st.snapshots >= many.length + 2 && st.clips >= 1 && st.defs >= 30 && st.libraries >= 2);
+assert.ok(st.stacks >= 5 && st.in_tray >= 1);
+if (!process.env.SEED) for (const id of ['teststack001', 'testmacro001', 'testmacro002', 'testsong0001', 'testrule0001']) await j(`/api/stacks/${id}?forget=1`, 'DELETE');
 
 if (!process.env.SEED) {
   for (const s of [real, old, ...many]) await j(`/api/snapshots/${s.uid}?forget=1`, 'DELETE');

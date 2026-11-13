@@ -5,17 +5,31 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
 <title>Snapshot Library</title>
+<link rel="icon" href="data:,">
 <link rel="stylesheet" href="app.css">
 </head>
-<body>
+<body class="bench">
 <div class="frame">
   <header class="bar">
     <span class="plate black big">SF-000</span>
     <span class="plate white">SNAPSHOT LIBRARY</span>
+    <span class="sep"></span>
+    <!-- the open stack: what is dealt out on the table -->
+    <label class="field name"><span id="s-kind">STACK</span><input id="s-name" type="text" autocomplete="off" spellcheck="false" aria-label="The open stack's name"></label>
+    <span id="s-count" class="plate white">0</span>
+    <button id="s-load" class="key" aria-pressed="false" title="Put this stack in the tray: SF-000 takes it at LOAD"><i></i><span>TO SF-000</span></button>
+    <label class="field small" id="s-knob-field" hidden><span>KNOB</span>
+      <select id="s-knob" aria-label="The snapshot knob this macro goes on"></select>
+    </label>
+    <label class="field small" id="s-depth-field" hidden><span>DEPTH</span><input id="s-depth" type="number" min="0" max="100" step="1" aria-label="The macro's depth, 0 to 100"></label>
+    <button id="s-keep" class="key" title="Keep this as a stack of its own"><i></i><span>KEEP</span></button>
+    <button id="s-freeze" class="key" title="Stop it filling itself: keep what it holds now as an ordinary stack"><i></i><span>FREEZE</span></button>
+    <button id="s-remove" class="key danger" title="Remove this stack. Its chips stay in the library"><i></i><span>REMOVE STACK</span></button>
     <span class="grow"></span>
     <label class="field"><span>FIND</span><input id="find" type="search" autocomplete="off" spellcheck="false" placeholder="NAME, TAG, EFFECT"></label>
     <label class="field"><span>ORDER</span>
       <select id="order">
+        <option value="own">AS IT IS STACKED</option>
         <option value="new">NEWEST FIRST</option>
         <option value="old">OLDEST FIRST</option>
         <option value="energy-up">CALM TO PEAK</option>
@@ -28,46 +42,49 @@
     </label>
   </header>
 
-  <main class="body">
-    <section id="grid" class="grid" aria-label="Snapshots"></section>
-
-    <aside class="side">
-      <div class="panel">
-        <div class="legend">THE MAP: ENERGY UP, BRIGHTNESS ACROSS</div>
-        <div id="map" class="map"></div>
-        <div class="row">
-          <button id="sound" class="key" aria-pressed="false"><i></i><span>WITH SOUND</span></button>
-          <button id="clear" class="key"><i></i><span>SHOW ALL</span></button>
-        </div>
-      </div>
-
-      <div id="detail" class="panel detail" hidden>
-        <div class="row head"><span id="d-name" class="plate white"></span><span id="d-when" class="small"></span></div>
-        <div class="row">
-          <button id="play" class="key" aria-pressed="false"><i></i><span>PLAY</span></button>
-          <button id="mark" class="key" aria-pressed="false"><i></i><span>MARK</span></button>
-          <button id="like" class="key"><i></i><span>NEAREST</span></button>
-          <button id="delete" class="key danger"><i></i><span>REMOVE</span></button>
-        </div>
-        <div id="d-measures" class="bars"></div>
-        <div class="legend" id="d-tempo"></div>
-        <div class="legend">LANES</div>
-        <div id="d-lanes" class="bars"></div>
-        <div class="legend">EFFECTS IN USE</div>
-        <div id="d-effects" class="plates"></div>
-        <label class="field wide"><span>TAGS</span><input id="d-tags" type="text" autocomplete="off" spellcheck="false" placeholder="COMMA BETWEEN EACH"></label>
-        <label class="field wide"><span>NOTES</span><textarea id="d-notes" rows="3" spellcheck="false"></textarea></label>
-        <div class="row links"><a id="d-clip" download>CLIP</a><a id="d-json" download>SNAPSHOT FILE</a></div>
-        <div class="small" id="d-uid"></div>
-      </div>
-    </aside>
+  <main class="stage">
+    <canvas id="bench" aria-label="The bench: stacks of snapshots in pockets, the open stack dealt out, and the tray SF-000 loads"></canvas>
+    <!-- the rack's rows, when there are more than show: beside the lip they slide under -->
+    <div id="rows" class="rows" hidden>
+      <button id="rows-up" class="key" title="The rows of stacks before these"><i></i><span>&#9650;</span></button>
+      <span id="rows-say" class="plate white"></span>
+      <button id="rows-down" class="key" title="The rows of stacks after these"><i></i><span>&#9660;</span></button>
+    </div>
+    <div id="no3d" class="empty" hidden>THIS BROWSER WOULD NOT START THE 3D BENCH. <a href="flat.html">THE FLAT PAGE</a> HAS THE SAME LIBRARY.</div>
   </main>
 
-  <footer class="strip">
+  <!-- the selected chip -->
+  <section id="chip" class="strip chip" aria-label="The selected snapshot">
+    <label class="field name"><span>CHIP</span><input id="c-name" type="text" autocomplete="off" spellcheck="false" aria-label="The snapshot's name" disabled></label>
+    <label class="field tags"><span>TAGS</span><input id="c-tags" type="text" autocomplete="off" spellcheck="false" placeholder="COMMA BETWEEN EACH" disabled></label>
+    <label class="field notes"><span>NOTES</span><input id="c-notes" type="text" autocomplete="off" spellcheck="false" disabled></label>
+    <label class="field small part" id="c-bars-field" hidden><span>BARS</span><input id="c-bars" type="number" min="1" max="256" step="1"></label>
+    <label class="field small part" id="c-morph-field" hidden><span>WAY IN</span><input id="c-morph" type="number" min="0" max="256" step="0.25"></label>
+    <div id="c-measures" class="meters" aria-hidden="true"></div>
+    <span class="small" id="c-when"></span>
+    <span class="grow"></span>
+    <button id="play" class="key" aria-pressed="false"><i></i><span>PLAY</span></button>
+    <button id="mark" class="key" aria-pressed="false"><i></i><span>MARK</span></button>
+    <button id="like" class="key" title="A stack of the chips that sound nearest this one"><i></i><span>LIKE THIS</span></button>
+    <button id="song" class="key" title="This chip's family spread into the parts of a set piece: in, build, peak, break, peak, out"><i></i><span>SONG FROM THIS</span></button>
+    <button id="knob" class="key" title="A macro from this chip's family, calm to full: what a snapshot knob sweeps"><i></i><span>KNOB FROM THIS</span></button>
+    <button id="takeout" class="key" title="Take it out of this stack. It stays in the library"><i></i><span>TAKE OUT</span></button>
+    <button id="delete" class="key danger" title="Remove it from this library. SF-000 keeps its own copy"><i></i><span>REMOVE</span></button>
+  </section>
+
+  <footer class="strip foot">
     <span id="count" class="plate white">0 SNAPSHOTS</span>
+    <button id="m-stack" class="key" title="A new stack of the marked chips"><i></i><span>STACK THEM</span></button>
+    <button id="m-macro" class="key" title="A macro of the marked chips, in the order they lie"><i></i><span>MACRO</span></button>
+    <button id="m-mood" class="key" title="A mood worked out from what the marked chips share: a stack of everything that fits it"><i></i><span>MOOD FROM THEM</span></button>
+    <label class="field small tagfield"><span>TAG</span><input id="m-tag" type="text" autocomplete="off" spellcheck="false" placeholder="+ADD  -TAKE OFF" aria-label="Tags to put on the marked chips, or with a minus to take off"></label>
     <button id="export" class="key"><i></i><span>EXPORT</span></button>
     <button id="unmark" class="key"><i></i><span>UNMARK ALL</span></button>
-    <span id="status" class="status"></span>
+    <span class="sep"></span>
+    <button id="autosort" class="key" aria-pressed="false" title="Deal the whole library into piles of like sounds"><i></i><span>AUTO SORT</span></button>
+    <button id="night" class="key" aria-pressed="false" title="The dark library, as the dark instrument (D)"><i></i><span>DARK</span></button>
+    <span id="status" class="status" role="status"></span>
+    <a class="small link" href="flat.html">FLAT PAGE</a>
   </footer>
 </div>
 <audio id="audio" loop preload="none"></audio>

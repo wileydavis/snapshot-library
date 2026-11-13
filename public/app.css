@@ -78,3 +78,76 @@ button, input, select, textarea { font: inherit; letter-spacing: inherit; color:
   .grid { overflow: visible; grid-template-columns: repeat(auto-fill, minmax(272px, 1fr)); justify-items: center; }
   .field input { width: 130px; }
 }
+
+/* ---------------------------------------------------------------- the bench (index.html): the bar, the 3D stage, the chip's strip, the foot */
+body.bench .frame { padding: 6px; }
+body.bench .bar { gap: 10px; padding: 6px 12px; flex-wrap: nowrap; overflow: hidden; }
+body.bench .stage { flex: 1; min-height: 0; position: relative; background: var(--black); border-left: 1px solid var(--black); border-right: 1px solid var(--black); }
+body.bench #bench { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; outline: none; }
+body.bench .stage .empty { position: absolute; left: 24px; top: 24px; }
+body.bench .stage .empty a { color: var(--black); }
+body.bench .strip { gap: 10px; padding: 6px 12px; flex-wrap: nowrap; overflow: hidden; }
+body.bench .strip.chip { border-radius: 0; border-bottom: 0; background: var(--bluegrey); }
+body.bench .strip.foot { background: var(--putty); }
+.sep { width: 1px; align-self: stretch; background: var(--black); opacity: 0.45; margin: 2px 2px; flex: none; }
+.key { white-space: nowrap; flex: none; }
+.plate, .field > span { flex: none; }
+.field { min-width: 0; }
+.field.name input { width: 210px; }
+.field.tags input { width: 170px; }
+.field.notes { flex: 1 1 120px; max-width: 320px; }
+.field.notes input { width: 100%; }
+.field.small input { width: 62px; text-align: right; }
+.field.small select { padding: 5px 4px; }
+.field.tagfield input { width: 132px; text-align: left; }
+.field input:disabled { opacity: 0.4; }
+.field[hidden], .key[hidden] { display: none; }
+.meters { display: flex; gap: 3px; align-items: flex-end; height: 28px; flex: none; }
+.meters div { width: 9px; height: 28px; background: var(--white); border: 1px solid var(--black); position: relative; }
+.meters div b { position: absolute; left: 0; right: 0; bottom: 0; background: var(--black); display: block; }
+.link { color: var(--black); flex: none; }
+body.bench .status { min-width: 80px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 1500px) { .field.notes { display: none; } .field.tags input { width: 130px; } .field.name input { width: 160px; } }
+@media (max-width: 1180px) { #c-measures, #c-when, .field.tags { display: none; } }
+
+/* ---------------------------------------------------------------- the dark library: the dark instrument's own colours (SF-000 with D)
+   Plates are dark, a pale display's ground is dark, print and marks are light. Lights and the
+   yellow keys are as they were. */
+body.night { --putty: #3B3C3A; --grey: #303231; --bluegrey: #24272A; --sea: #1F2221; --white: #1A1C1B; --black: #0D0E0F; --lit: #E9E6E2; --ink: #D8D3C8; --dim: #7C807A; --keycap: #565955;
+  background: #0D0E0F; color: var(--ink); }
+body.night .plate.white { background: #1A1C1B; color: var(--ink); }
+body.night .plate.black { background: #151615; color: var(--lit); }
+body.night .field { background: #1A1C1B; border-color: #0D0E0F; }
+body.night .field > span { background: #151615; color: var(--lit); }
+body.night .field input, body.night .field select, body.night .field textarea { color: var(--ink); }
+body.night .field select option { background: #1A1C1B; color: var(--ink); }
+body.night .field input::placeholder { color: var(--dim); }
+body.night .field:focus-within { outline-color: var(--ink); }
+body.night .key { color: var(--ink); }
+body.night .key i { background: var(--keycap); border-color: #0D0E0F; }
+body.night .key[aria-pressed="true"] i { background: var(--yellow); }
+body.night #play[aria-pressed="true"] i { background: var(--green); }
+body.night .key.danger[aria-pressed="true"] i { background: var(--red); }
+body.night .key:focus-visible i, body.night .card:focus-visible { outline-color: var(--ink); }
+body.night .bar { border-bottom-color: #0D0E0F; }
+body.night .strip { border-color: #0D0E0F; }
+body.night .sep { background: var(--dim); }
+body.night .meters div { background: #1A1C1B; border-color: #0D0E0F; }
+body.night .meters div b { background: var(--ink); }
+body.night .bars div { background: #1A1C1B; border-color: #0D0E0F; }
+body.night .bars div b { background: var(--ink); }
+body.night .link, body.night .links a { color: var(--ink); }
+body.night .links a { background: #1A1C1B; border-color: #0D0E0F; }
+body.night .empty { background: #3B3C3A; border-color: #0D0E0F; color: var(--ink); }
+body.night .empty a { color: var(--ink); }
+body.night .panel { border-color: #0D0E0F; }
+body.night .map button { background: #1A1C1B; border-color: #0D0E0F; color: var(--ink); }
+body.night .map button[aria-pressed="true"] { background: var(--ink); color: #1A1C1B; }
+body.night .map button.none { color: #5A605D; }
+
+/* the rack's rows: a small plate at the right end of the lip */
+.rows { position: absolute; right: 14px; display: flex; align-items: center; gap: 6px; transform: translateY(-50%); background: var(--putty); border: 1px solid var(--black); padding: 3px 8px; }
+.rows .key { gap: 4px; }
+.rows .key i { width: 18px; height: 18px; }
+.rows .plate { font-size: 13px; padding: 2px 7px; }
+.rows[hidden] { display: none; }

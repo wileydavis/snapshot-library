@@ -7,9 +7,11 @@
     "dev": "wrangler dev -c wrangler.dev.jsonc --port 8787",
     "deploy": "wrangler deploy",
     "test": "node test/unit.test.mjs && node test/auth.test.mjs",
-    "test:live": "node test/live.test.mjs"
+    "test:live": "node test/live.test.mjs",
+    "test:bench": "node test/bench.test.mjs"
   },
   "devDependencies": {
+    "puppeteer-core": "^25.17.0",
     "wrangler": "^4.158.0"
   }
 }

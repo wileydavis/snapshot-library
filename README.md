@@ -1,21 +1,75 @@
 # Snapshot Library
 
 A private catalog of SF-000 snapshots, running on Cloudflare. SF-000 sends each snapshot as it is
-taken, with the four bars it was taken over. This keeps them, shows them as the cards the
-instrument draws, and lets you hear, order, narrow and export them.
-
-- **Click a card** to hear its clip (it loops); click it again, or press space, to stop. Arrows move.
-- **ORDER**: newest, calm to peak, dark to bright, or nearest in sound to the selected one.
-- **THE MAP**: energy up, brightness across, the same sixteen squares as the E16's library scene.
-  A square narrows the list to what is in it.
-- **FIND** looks in names, tags, notes and effects. Tags and notes are written here and kept
-  beside the snapshot, never in it.
-- **MARK** (shift-click, or M) then **EXPORT** downloads a library file: those snapshots, and every
-  definition they name. With nothing marked, EXPORT takes everything shown.
-- Each snapshot has its own address (the page's `#...`), so one can be bookmarked or sent.
+taken, with the four bars it was taken over. This keeps them and lays them out as things to
+handle: every snapshot is a **chip**, chips lie in **stacks**, and the stacks you put in the tray
+are what the instrument loads.
 
 Nothing is asked of you when a snapshot is taken: no name, no tag. What it sounded like comes with
-it, worked out by SF-000.
+it, worked out by SF-000, and that is what the stacks that fill themselves go by.
+
+## The bench
+
+A bench in the instrument's materials, in 3D. At the back, the **rack**: pockets cut into the
+body, a stack in each, its name on a plate. In front, the **table**: the open stack dealt out
+face up. On the right, the **tray**: sixteen knob bays and a row of pockets, standing for SF-000.
+
+A chip's face is the card the instrument draws. Its edge is its colour (deep red for a dark
+sound, through amber and yellow, to white), so the side of a pile shows what is in it.
+
+| DO THIS | TO |
+| --- | --- |
+| Click a stack | deal it out on the table |
+| Click a chip | choose it and hear its four bars, looped. Again, or space, stops. Arrows move along the chips |
+| Shift-click a chip, or **M** | mark it. What is done to a marked chip is done to all the marked |
+| Drag a chip onto a stack's pocket | put it in that stack (it stays where it was too: a chip can be in any number of stacks) |
+| Drag a chip onto **+ NEW STACK** | a new stack of it |
+| Drag a chip along the table | put the open stack in order (a stack of your own, with ORDER on AS IT IS STACKED) |
+| **Backspace**, or TAKE OUT | take the chosen chip out of the open stack. It stays in the library |
+| Drag a stack by its pocket into the tray | SF-000 takes it at LOAD. Dragged out again, it does not. TO SF-000 on the bar does the same |
+| Drag a chip onto a knob bay | add it to that knob's macro, or make one there |
+| Drag a macro from its bay to another | move it to that knob |
+| The wheel | over the table, moves through the open stack; over the rack, turns its rows |
+| **/** | FIND, in what is dealt: names, tags, notes, effects |
+| **D** | the dark library, as the dark instrument. It starts as your computer is set, and stays as you leave it |
+| **Esc** | back to ALL |
+
+The bar at the top is the open stack: its name (type a new one), how many it holds, and its keys.
+The strip under the table is the chosen chip: its name, tags and notes (type, then Return), its
+seven measures, and what can be made from it. The foot is for the marked.
+
+### Stacks
+
+- **ALL**, **UNSORTED** (in no stack of your making yet) and **RECENT** are always there.
+- **Your stacks** come next: made with + NEW STACK, STACK THEM (the marked), or KEEP on anything
+  that is out. REMOVE STACK, pressed twice, takes a stack away and leaves its chips.
+- **A macro** is a stack with a job: the chips a snapshot knob sweeps through, in the order they
+  lie, with a DEPTH. MACRO makes one of the marked. Give it a knob on the bar, or drag it to a bay.
+- **A song** is parts in a line: each a chip, how many BARS it lasts and how long the WAY IN takes.
+  In the tray it loads as an arrangement.
+- **Moods** (DEEP, DUB, DRIVING, HYPNOTIC, PEAK, SPARSE, DARK, BRIGHT, HEAVY, RESTLESS, WARM-UP)
+  hold whatever fits them. Each is a place on the seven measures and how much each measure
+  matters to it.
+- **Sittings**: one stack for each sitting at the instrument (snapshots less than 45 minutes
+  apart), the newest six.
+
+### Stacks that fill themselves
+
+| | |
+| --- | --- |
+| **LIKE THIS** | the 24 nearest the chosen chip, itself first, by the sum SF-000 and the E16 use |
+| **SONG FROM THIS** | the chip's family (the same colour whatever the energy, near the same tempo; taken in the same sitting counts double) spread over the shape of a set piece: in, build, drive, peak, break, build, peak, out. No chip twice |
+| **KNOB FROM THIS** | three of its family from calmest to fullest: a macro |
+| **MOOD FROM THEM** | what the marked chips share: their middle on each measure, weighted by how far they agree on it. A stack of everything that fits |
+| **AUTO SORT** | the whole library dealt into piles of like sounds (k-means from a fixed start, so the same library is dealt the same way), the most typical chip on top. Press it again to put them away |
+
+What one of these gives is out on the table and not kept. **KEEP** makes it a stack that goes on
+filling itself as snapshots arrive; **FREEZE** makes it an ordinary stack of what it holds now.
+The arithmetic is plain and the same every time (`public/js/stacks.js`); nothing is learned or
+trained.
+
+`flat.html` is the page as it was before the bench: cards in a grid, the map, export. It is what
+to use where a browser will not start 3D.
 
 ## What gets stored
 
@@ -24,9 +78,13 @@ R2 bucket snapshot-library
   snapshots/<uid>.json     each snapshot exactly as SF-000 wrote it, whole
   clips/<uid>              its four bars (Ogg Vorbis, a few hundred kilobytes)
 D1 database snapshot-library
-  snapshots                an index for the page: name, time, the profile's measures, lanes, effects
+  snapshots                an index for the page: name, time, the profile's measures, lanes, effects, tags, notes
   defs                     every definition a snapshot names (what each stored value was a position of)
+  stacks                   one row a stack: its name, its kind, its chips in order (by uid), its rule if it
+                           fills itself, and for the tray: whether it loads, a macro's knob and depth
 ```
+
+A stack only names its chips. A snapshot is never copied into one and never changed by one.
 
 The contract is SF-000's `FORMAT.md`: additions only, and whatever a snapshot holds that this code
 does not know stays in it. The index can always be rebuilt from the bucket.
@@ -87,11 +145,16 @@ snapshot's own id.
 | `POST /api/have` | `{ "uids": [...] }` → `{ "have": { "<uid>": { "clip": true } } }`. What is already here, for catching up after time offline. One removed here answers `{ "gone": true }`: known, not wanted again. |
 | `GET /api/snapshots` | The list the page draws from, newest first. |
 | `GET /api/snapshots/<uid>` | One, with the snapshot whole under `snapshot`. |
-| `PATCH /api/snapshots/<uid>` | `{ "tags": [...], "notes": "..." }`. |
+| `PATCH /api/snapshots/<uid>` | `{ "name": "...", "tags": [...], "notes": "..." }`, any of them. A name given here stands until SF-000 renames the snapshot there: the last to rename it has it. |
+| `POST /api/tags` | `{ "uids": [...], "add": [...], "remove": [...] }`: tags on many at once. |
 | `DELETE /api/snapshots/<uid>` | Removes it and its clip, and leaves a mark so it is not taken in again. `?forget=1` drops the mark too. |
 | `GET /api/clips/<uid>` | The clip, with byte ranges. |
 | `POST /api/export` | `{ "uids": [...] }` → a library file: `{ "sf000lib": 1, "snapshots": [...], "defs": {...} }`, tags and notes under each snapshot's `ext.web`. |
 | `GET /api/defs?prints=a,b` | Definitions by print. |
+| `GET /api/stacks` | Every stack, in the order they stand. `?removed=1`: the removed ones. |
+| `POST /api/stacks` | `{ "id"?, "name", "kind": "stack" \| "macro" \| "song" \| "rule", "items": [uid or { "u": uid, "bars", "morph" }], "rule"?, "depth"?, "slot"?, "load"? }`. With an `id` (8 to 24 letters and digits), making it twice is one stack. |
+| `GET /api/stacks/<id>`, `PATCH`, `DELETE` | One stack; any of those fields changed (`items` is the whole list, in order); removed (kept, and put back with `PATCH { "restore": true }`). A knob holds one macro: giving a macro a `slot` takes it from the one that had it. |
+| `GET /api/load` | **What SF-000 takes at LOAD**: `{ "stacks": [ { id, name, kind, uids, parts? } ], "knobs": [ { id, slot, name, depth, uids } ], "chips": { "<uid>": { name, clip, tags } } }`. The stacks in the tray, the macros that have a knob, each with the chips it holds now (a stack that fills itself: what it held when the page last looked). |
 | `GET /api/stats` | Counts. |
 
 ## Local development
@@ -102,6 +165,10 @@ npm run dev              # http://localhost:8787, no login, local storage
 npm test                 # the index's summary of a snapshot, the page's ordering, the Access gate
 npm run test:live        # the whole path against the running dev server, with real SF-000 snapshots
 SEED=1 npm run test:live # the same, leaving sixty made-up snapshots to look at
+node test/seed.mjs       # a made-up library of 240 (or `node test/seed.mjs 3000`): sittings, grooves, families
+node test/seed.mjs --clear
+npm run test:bench       # the bench itself, pressed and dragged in a real browser with no window (needs Chrome;
+                         # CHROME=/path/to/it if it is not /usr/bin/google-chrome). SHOTS=dir keeps pictures.
 
 # SF-000's own sender against this server (from the SF-000 repo, with `npm run dev` running here):
 #   build/SF000_artefacts/Release/SF-000 --onlinetest http://127.0.0.1:8787
@@ -110,20 +177,35 @@ SEED=1 npm run test:live # the same, leaving sixty made-up snapshots to look at
 ## Files
 
 ```
-src/worker.js          the API: taking snapshots and clips in, the list, export, Access verification
-src/schema.js          the D1 tables
-public/index.html      the page
-public/js/main.js      what the page does
-public/js/card.js      a snapshot's card, drawn as SF-000 draws it
+src/worker.js          the API: snapshots and clips in, the list, stacks, what SF-000 loads, export, Access
+src/schema.js          the D1 tables, and the columns added since (the Worker adds what a table lacks)
+public/index.html      the bench
+public/js/main.js      what there is and what each press and drop means: chips, stacks, the open stack
+public/js/bench.js     the bench drawn and handled: the rack, the table, the tray, picking up and putting down
+public/js/stacks.js    the stacks that fill themselves: like, family, song, knob, moods, sittings, auto sort
+public/js/card.js      a snapshot's card, drawn as SF-000 draws it, light or dark
 public/js/profile.js   the profile's measures and the likeness sum, as SF-000 has them
-public/js/narrow.js    which snapshots are shown, and in what order
-test/                  the tests, and snapshots as SF-000 0.1.0 writes them
+public/js/narrow.js    FIND and ORDER
+public/flat.html, public/js/flat.js      the page as it was before the bench
+public/vendor/three.min.js               three.js 0.187 (MIT, its licence beside it), bundled once with
+                                         esbuild from the npm package's build/three.module.js; no build step
+test/                  the tests, snapshots as SF-000 0.1.0 writes them, and the made-up library
 ```
+
+The Worker makes and widens its own tables when it starts: tables with `CREATE TABLE IF NOT
+EXISTS`, and a column a table from before lacks with `ALTER TABLE ... ADD COLUMN`. Nothing is ever
+changed or dropped, so a deploy cannot take a snapshot, a tag or a stack with it.
 
 ## Not built yet
 
-- SF-000 loading a library file made here.
-- Buckets and snapshot knobs built here and sent back to the instrument.
-- Deeper listening: likeness learned from the clips, comparison with reference tracks, a map laid
-  out by likeness.
-- The phone layout is plain: it works, it has not been designed.
+- **SF-000's LOAD key.** The tray and `GET /api/load` are here; the instrument does not ask yet.
+  Until it does, EXPORT's library file is the only way out, and SF-000 does not read that either.
+- **Putting chips away from the instrument.** A snapshot can name a sample that is only on the
+  Mac. Samples have to be kept here (by their SHA-256, which the session already has) before the
+  instrument can safely let go of a chip.
+- A song's parts are set one at a time on the chip's strip: no row of bars to drag.
+- The moods' places are fixed in `stacks.js`: no page to move them on. MOOD FROM THEM is the way
+  to make your own.
+- Deeper listening: likeness learned from the clips, comparison with reference tracks, a layout
+  of the table by likeness.
+- The bench is made for a mouse and a wide window. On a phone, `flat.html`.

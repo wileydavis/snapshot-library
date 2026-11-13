@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Snapshot Library (flat)</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div class="frame">
+  <header class="bar">
+    <span class="plate black big">SF-000</span>
+    <span class="plate white">SNAPSHOT LIBRARY</span>
+    <a class="plate black" href="./" style="text-decoration:none">THE BENCH</a>
+    <span class="grow"></span>
+    <label class="field"><span>FIND</span><input id="find" type="search" autocomplete="off" spellcheck="false" placeholder="NAME, TAG, EFFECT"></label>
+    <label class="field"><span>ORDER</span>
+      <select id="order">
+        <option value="new">NEWEST FIRST</option>
+        <option value="old">OLDEST FIRST</option>
+        <option value="energy-up">CALM TO PEAK</option>
+        <option value="energy-down">PEAK TO CALM</option>
+        <option value="bright-up">DARK TO BRIGHT</option>
+        <option value="bright-down">BRIGHT TO DARK</option>
+        <option value="like">NEAREST THE SELECTED</option>
+        <option value="name">NAME</option>
+      </select>
+    </label>
+  </header>
+
+  <main class="body">
+    <section id="grid" class="grid" aria-label="Snapshots"></section>
+
+    <aside class="side">
+      <div class="panel">
+        <div class="legend">THE MAP: ENERGY UP, BRIGHTNESS ACROSS</div>
+        <div id="map" class="map"></div>
+        <div class="row">
+          <button id="sound" class="key" aria-pressed="false"><i></i><span>WITH SOUND</span></button>
+          <button id="clear" class="key"><i></i><span>SHOW ALL</span></button>
+        </div>
+      </div>
+
+      <div id="detail" class="panel detail" hidden>
+        <div class="row head"><span id="d-name" class="plate white"></span><span id="d-when" class="small"></span></div>
+        <div class="row">
+          <button id="play" class="key" aria-pressed="false"><i></i><span>PLAY</span></button>
+          <button id="mark" class="key" aria-pressed="false"><i></i><span>MARK</span></button>
+          <button id="like" class="key"><i></i><span>NEAREST</span></button>
+          <button id="delete" class="key danger"><i></i><span>REMOVE</span></button>
+        </div>
+        <div id="d-measures" class="bars"></div>
+        <div class="legend" id="d-tempo"></div>
+        <div class="legend">LANES</div>
+        <div id="d-lanes" class="bars"></div>
+        <div class="legend">EFFECTS IN USE</div>
+        <div id="d-effects" class="plates"></div>
+        <label class="field wide"><span>TAGS</span><input id="d-tags" type="text" autocomplete="off" spellcheck="false" placeholder="COMMA BETWEEN EACH"></label>
+        <label class="field wide"><span>NOTES</span><textarea id="d-notes" rows="3" spellcheck="false"></textarea></label>
+        <div class="row links"><a id="d-clip" download>CLIP</a><a id="d-json" download>SNAPSHOT FILE</a></div>
+        <div class="small" id="d-uid"></div>
+      </div>
+    </aside>
+  </main>
+
+  <footer class="strip">
+    <span id="count" class="plate white">0 SNAPSHOTS</span>
+    <button id="export" class="key"><i></i><span>EXPORT</span></button>
+    <button id="unmark" class="key"><i></i><span>UNMARK ALL</span></button>
+    <span id="status" class="status"></span>
+  </footer>
+</div>
+<audio id="audio" loop preload="none"></audio>
+<script type="module" src="js/flat.js"></script>
+</body>
+</html>
