@@ -273,21 +273,27 @@ export function another(m, changes = {}) { return surface({ ...m.userData.spec, 
 // can be drawn, and as bright to the eye whatever the colour.
 const LIGHT_FRAG = /* glsl */`
 uniform vec3 uColour;
+varying vec3 vTint;
 #include <common>
 #include <clipping_planes_pars_fragment>
 void main() {
   #include <clipping_planes_fragment>
-  gl_FragColor = vec4( clamp( uColour, 0.0, 60.0 ), 1.0 );
+  gl_FragColor = vec4( clamp( vTint.r >= 0.0 ? vTint : uColour, 0.0, 60.0 ), 1.0 );
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
 }`;
 const LIGHT_VERT = /* glsl */`
+varying vec3 vTint;
 #include <common>
 #include <clipping_planes_pars_vertex>
 void main() {
   #include <begin_vertex>
   #include <project_vertex>
   #include <clipping_planes_vertex>
+  vTint = vec3( -1.0 );                       // (each of a crowd of lights drawn together has its own colour)
+  #ifdef USE_INSTANCING_COLOR
+    vTint = instanceColor;
+  #endif
 }`;
 export function glowOf(colour) {
   const srgb = new THREE.Color(colour).convertLinearToSRGB();
@@ -316,7 +322,7 @@ function fromHsv(h, s, v) {
   const f = (n) => { const k = (n + h * 6) % 6; return v - v * s * Math.max(0, Math.min(k, 4 - k, 1)); };
   return { r: f(5), g: f(3), b: f(1) };
 }
-export function light(colour, clip = null) {
+export function light(colour = '#000000', clip = null) {
   const m = new THREE.ShaderMaterial({ uniforms: { uColour: { value: colour.isColor ? colour : glowOf(colour) } }, vertexShader: LIGHT_VERT, fragmentShader: LIGHT_FRAG, clipping: true });
   if (clip) m.clippingPlanes = clip;
   return m;
@@ -592,5 +598,74 @@ export class Picture {
     this.last.uniforms.uTex.value = this.scene.texture; this.last.uniforms.uBloom.value = this.mips[0].texture;
     this.run(this.last, null);
     r.shadowMap.autoUpdate = shadows;
+  }
+}
+
+// ---------------------------------------------------------------- a knob, as the instrument's small ones are
+// Its parts are drawn in crowds (every cap on a plate together, every light together): a batch
+// is told where each knob stands and what its ring shows, and is then put on a group as four things.
+// A ring is sixteen lights from six o'clock round by the left; v (0 to 1) is how far round it is lit.
+const pointerPrint = (() => {
+  let t = null;
+  return () => {
+    if (t) return t;
+    const c = document.createElement('canvas'); c.width = c.height = 64;
+    const g = c.getContext('2d');
+    g.fillStyle = '#E9E6E2'; g.fillRect(30, 38, 4, 17);                // the line on the cap: toward six o'clock at rest
+    t = new THREE.CanvasTexture(c); t.colorSpace = THREE.NoColorSpace; t.premultiplyAlpha = true;
+    return t;
+  };
+})();
+let knobParts = null;
+const partsOfKnob = () => knobParts || (knobParts = {
+  cap: turnedGeo(CAP_SMALL_OUTLINE, 28), base: turnedGeo(BASE_SMALL_OUTLINE, 32), seg: segmentGeo(8.75, 12.9, 0.2, 1.39),
+});
+export const RING = 12.9 / UNIT;
+export class KnobBatch {
+  constructor({ dark = true, clip = null } = {}) {
+    this.knobs = []; this.dark = dark; this.clip = clip;
+  }
+  // x, y, z: where it stands (y: the top of what it stands on). v: its turn. colour: its lights'. arc: lit from the start to v (else only where v is).
+  add(x, y, z, v = 0, colour = '#E9E6E2', arc = true) { this.knobs.push({ x, y, z, v: Math.max(0, Math.min(1, v)), colour, arc }); return this.knobs.length - 1; }
+  // One knob, turned to v: its cap and its lights (after addTo).
+  set(i, v) {
+    const k = this.knobs[i];
+    if (!k || !this.cap) return;
+    k.v = Math.max(0, Math.min(1, v));
+    this.place(i);
+    this.cap.instanceMatrix.needsUpdate = true; this.lights.instanceColor.needsUpdate = true;
+  }
+  place(i) {
+    const k = this.knobs[i], T = this.tools;
+    T.q.setFromAxisAngle(T.up, -k.v * 2 * Math.PI);
+    this.cap.setMatrixAt(i, T.m.compose(T.at.set(k.x, k.y, k.z), T.q, T.one));
+    const on = glowOf(k.colour);
+    for (let s = 0; s < 16; s++) {
+      const lo = s / 16, hi = (s + 1) / 16;
+      const part = k.arc ? Math.max(0, Math.min(1, (Math.min(k.v, hi) - lo) * 16)) : (k.v >= lo && (k.v < hi || (s === 15 && k.v >= 1)) ? 1 : 0);
+      const lit = part > 0.995 ? 1 : part > 0.02 ? 0.25 + 0.75 * part : 0;
+      this.lights.setColorAt(i * 16 + s, T.c.copy(T.unlit).lerp(on, lit));
+    }
+  }
+  addTo(group) {
+    const n = this.knobs.length;
+    if (!n) return;
+    const P = partsOfKnob(), clip = this.clip, D = this.dark;
+    const cap = new THREE.InstancedMesh(P.cap, surface({ colour: D ? '#232321' : '#42423F', rough: D ? 0.36 : 0.42, kind: 1, map: pointerPrint(), clip }), n);
+    const base = new THREE.InstancedMesh(P.base, surface({ colour: D ? '#111211' : '#1E1F1D', rough: 0.3, clip }), n);
+    const lights = new THREE.InstancedMesh(P.seg, light('#000000', clip), n * 16);
+    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0), one = new THREE.Vector3(1, 1, 1), at = new THREE.Vector3();
+    this.cap = cap; this.lights = lights;
+    this.tools = { m, q, up, one, at, c: new THREE.Color(), unlit: new THREE.Color(D ? '#474B48' : '#4D514E') };
+    this.knobs.forEach((k, i) => {
+      base.setMatrixAt(i, m.makeTranslation(k.x, k.y + 0.02 / UNIT, k.z));
+      for (let s = 0; s < 16; s++) {
+        q.setFromAxisAngle(up, -((s + 0.5) / 16) * 2 * Math.PI);
+        lights.setMatrixAt(i * 16 + s, m.compose(at.set(k.x, k.y, k.z), q, one));
+      }
+      this.place(i);
+    });
+    for (const o of [cap, base, lights]) { o.instanceMatrix.needsUpdate = true; if (o.instanceColor) o.instanceColor.needsUpdate = true; o.userData = { mat: true }; o.frustumCulled = false; group.add(o); }
+    cap.castShadow = true; cap.receiveShadow = true; base.receiveShadow = true;
   }
 }

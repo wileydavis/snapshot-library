@@ -60,7 +60,7 @@ function pileList() {
     add('all', 'ALL', allByTime(), 'black');
     add('unsorted', 'UNSORTED', rules.unsorted(state.all, state.stacks).map((u) => ({ u })), 'black');
     add('recent', 'RECENT', rules.recent(state.all).map((u) => ({ u })), 'black');
-    for (const s of state.stacks) add(`st:${s.id}`, s.name || 'UNNAMED', itemsOf(s), 'white', { kind: KIND[s.kind] || '', stack: s, lamp: inTray(s) });
+    for (const s of state.stacks) add(`st:${s.id}`, s.name || 'UNNAMED', itemsOf(s), 'white', { kind: KIND[s.kind] || '', stack: s, lamp: inTray(s), knob: knobOf(s) });
     add('new', '+ NEW STACK', [], 'grey', { add: true });
     for (const [id, m] of Object.entries(rules.MOODS)) {
       const items = rules.mood(state.all, m).map((u) => ({ u }));
@@ -72,6 +72,13 @@ function pileList() {
   });
 }
 const pileOf = (key) => pileList().find((p) => p.key === key) || null;
+// What kind of knob a stack is, if it is one: a macro always (it sweeps), a stack once it is on a knob (it steps: a cue stack).
+function knobOf(s) {
+  const kind = s.kind === 'macro' ? 'macro' : s.slot && s.kind !== 'song' ? 'cue' : '';
+  if (!kind) return null;
+  const n = itemsOf(s).length;
+  return { kind, slot: s.slot || 0, depth: s.depth === null || s.depth === undefined ? 1 : s.depth, count: `${n} CHIP${n === 1 ? '' : 'S'}` };
+}
 // In the tray: on one of its knobs (a macro, which sweeps, or a stack, which steps: a cue stack), or a stack marked for it.
 const inTray = (s) => !!s.slot || (s.kind !== 'macro' && !!s.load);
 const heatsOf = (items) => items.slice(0, 4000).map((it) => { const s = chip(it.u); return s && s.p ? s.p.bright : -1; });
@@ -79,7 +86,7 @@ const heatsOf = (items) => items.slice(0, 4000).map((it) => { const s = chip(it.
 // ---------------------------------------------------------------- drawing: the rack, the tray, the table, the strips
 function showRack() {
   const piles = pileList().map((p) => ({
-    key: p.key, name: p.name, count: p.items.length, tone: p.tone, kind: p.kind || '', lamp: !!p.lamp, add: !!p.add,
+    key: p.key, name: p.name, count: p.items.length, tone: p.tone, kind: p.kind || '', lamp: !!p.lamp, add: !!p.add, knob: p.knob || null,
     heats: heatsOf(p.items), top: p.items.length ? chip(p.items[0].u) : null, open: !!state.open && state.open.key === p.key,
   }));
   if (state.open && state.open.temp) {            // a stack not kept yet stands in the rack while it is out, after RECENT
@@ -89,7 +96,7 @@ function showRack() {
   bench.setRack(piles);
   const bays = Array.from({ length: 16 }, (_, i) => {
     const s = state.stacks.find((x) => x.slot === i + 1);
-    return s ? { key: `st:${s.id}`, name: s.name, sweeps: s.kind === 'macro', heats: heatsOf(itemsOf(s)), open: !!state.open && state.open.key === `st:${s.id}` } : { key: null, name: '' };
+    return s ? { key: `st:${s.id}`, name: s.name, sweeps: s.kind === 'macro', knob: knobOf(s), heats: heatsOf(itemsOf(s)), open: !!state.open && state.open.key === `st:${s.id}` } : { key: null, name: '' };
   });
   const loaded = state.stacks.filter((s) => s.kind !== 'macro' && inTray(s)).map((s) => ({ key: `st:${s.id}`, name: s.name || 'UNNAMED', count: itemsOf(s).length, heats: heatsOf(itemsOf(s)), open: !!state.open && state.open.key === `st:${s.id}` }));
   bench.setTray({ bays, stacks: loaded });
@@ -283,6 +290,26 @@ function play(uid) {
   say(`PLAYING ${up(s.name)}. CLICK IT AGAIN, OR PRESS SPACE, TO STOP.`);
 }
 function stop() { state.playing = null; audio.pause(); marks(); showChip(); }
+// A hand on a module's knob. DEPTH: how far the macro goes (kept when the hand lets go). TURN: through what the knob
+// holds, as the instrument's would go: each chip it comes to is heard, as a turn of a stack's knob cues it there.
+function turned(key, which, v, done, moved) {
+  const p = pileOf(key), s = p && p.stack;
+  if (!s) return;
+  if (which === 'depth') {
+    const d = Math.round(v * 100) / 100;
+    if (!done) say(`${up(s.name)}: DEPTH ${Math.round(d * 100)}`);
+    else if (moved && d !== s.depth) patchStack(s, { depth: d }, `${up(s.name)}: DEPTH ${Math.round(d * 100)}`);
+    return;
+  }
+  const items = itemsOf(s);
+  if (done || !items.length) return;
+  const i = Math.min(items.length - 1, Math.round(v * (items.length - 1))), uid = items[i].u, c = chip(uid);
+  if (state.playing !== uid && state.turnedTo !== uid) {
+    state.turnedTo = uid;
+    play(uid);
+    say(`${up(s.name)}: ${i + 1} OF ${items.length}${c ? `, ${up(c.name)}` : ''}${c && !c.has_clip ? ' (NO SOUND KEPT)' : ''}`);
+  }
+}
 const marks = () => bench.setMarks({ selected: state.selected, playing: state.playing, marked: state.marked });
 function step(by) {
   if (!state.shown.length) return;
@@ -583,6 +610,7 @@ function startBench() {
       pile: (key) => openPile(key),
       bay: (slot, key) => { if (key) openPile(key); else say(`KNOB ${slot} HOLDS NOTHING. DRAG CHIPS ONTO IT FOR A CUE STACK, OR A MACRO ONTO IT.`); },
       dragSet: (uid) => (state.marked.has(uid) ? markedInOrder() : [uid]),
+      turn: turned,
       rows: ({ first, shown, rows, y }) => {
         const more = rows > shown;
         $('rows').hidden = !more;

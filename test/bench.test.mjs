@@ -230,6 +230,28 @@ await page.select('#s-knob', '4'); await settle();
 await shot('knobs');
 part('KNOB FROM THIS makes a macro and it is given a knob; chips dropped on a knob are a cue stack; stacks and macros move between knobs');
 
+// 12b. a knob is a module, in the chassis and on its pile, with its two knobs. DEPTH turned by hand is kept; TURN goes through what it holds
+{
+  const k = `st:${macroId}`;
+  const spots = await S((x) => window.sfLibrary.bench.knobSpots.filter((s) => s.key === x).map((s) => `${s.which}${s.group === window.sfLibrary.bench.tray ? ' in the chassis' : ''}`), k);
+  assert.ok(spots.includes('depth in the chassis') && spots.includes('turn in the chassis') && spots.includes('turn'), `the macro on knob 4 is a module in the chassis and on its pile (${spots.join(', ')})`);
+  const depthOf = () => S((id) => window.sfLibrary.state.stacks.find((x) => x.id === id).depth, macroId);
+  const d0 = await depthOf();
+  const at = await where('whereKnob', k, 'depth', true);
+  await drag(at, { x: at.x, y: at.y + 60 });                                       // (down: less. 150 pixels is the whole of it)
+  const d1 = await depthOf();
+  assert.ok(Math.abs(d1 - Math.max(0, d0 - 0.4)) < 0.03, `DEPTH turned down by hand is kept (${d0} to ${d1})`);
+  const t = await where('whereKnob', k, 'turn', true);
+  await drag(t, { x: t.x, y: t.y - 170 });                                         // (all the way up: its last chip)
+  const said = (await state()).status;
+  assert.match(said, / OF /, `TURN goes through the chips it holds (${said})`);
+  // a cue stack's module has a TURN and no DEPTH
+  const cue = await S(() => { const s = window.sfLibrary.state.stacks.find((x) => x.kind === 'stack' && x.slot); return s ? window.sfLibrary.bench.knobSpots.filter((q) => q.key === `st:${s.id}` && q.group === window.sfLibrary.bench.tray).map((q) => q.which) : null; });
+  assert.deepEqual(cue, ['turn'], 'a cue stack on a knob is a module with a TURN and no DEPTH');
+  await key('unmark').catch(() => {});
+}
+part('a knob is a module with its two knobs: DEPTH turned by hand is kept, TURN goes through what it holds');
+
 // 10. a mood from examples
 await pile('mood:bright');
 for (const i of [0, 1, 2, 4]) await click(await where('whereChip', i), { shift: true });

@@ -2,7 +2,7 @@
 
 A private catalog of SF-000 snapshots, running on Cloudflare. SF-000 sends each snapshot as it is
 taken, with the four bars it was taken over. This keeps them and lays them out as things to
-handle: every snapshot is a **chip**, chips lie in **stacks**, and the stacks you put in the tray
+handle: every snapshot is a **chip**, chips lie in **stacks**, and the stacks you put on the chassis
 are what the instrument loads.
 
 Nothing is asked of you when a snapshot is taken: no name, no tag. What it sounded like comes with
@@ -13,8 +13,17 @@ it, worked out by SF-000, and that is what the stacks that fill themselves go by
 A bench made as SF-000 is made, in 3D: a powder-coated case in a dark room, with a warm glow
 under it. At the back, the **rack**: a faceplate with a cut-out for every stack, the stack
 standing in it as a pile of chips, its name on a small display in front. In front, on the case
-itself, the **table**: the open stack dealt out face up. On the right, the **tray**: sixteen
-knob bays and a row of pockets, standing for SF-000.
+itself, the **table**: the open stack dealt out face up. On the right, the **chassis**: a model
+of SF-000 standing on the bench, with sixteen pockets, four by four, for its sixteen snapshot
+knobs, and under them the stacks LOAD brings.
+
+A knob is a **module**: a small plate with its name on a display and the instrument's two knobs,
+TURN and DEPTH. A macro is always one (it rides on the pile of chips it sweeps through); a stack
+becomes one when it goes on a knob (a cue stack: it steps). Dropped in a pocket of the chassis,
+a module is on that knob at the next LOAD, and shows its knob's number: on teal if it sweeps, on
+amber if it steps. Its knobs turn under the hand (drag up for more): DEPTH is how far a macro
+goes, and is kept; TURN goes through the chips the knob holds and plays each one it comes to,
+as a turn of the instrument's knob would bring it.
 
 A chip is one of the instrument's plates: the snapshot's card printed on black anodizing that
 has been used, every chip with scratches of its own. Its edge is its colour (deep red for a dark
@@ -34,9 +43,10 @@ straight way, without the glow.
 | Drag a chip onto **+ NEW STACK** | a new stack of it |
 | Drag a chip along the table | put the open stack in order (a stack of your own, with ORDER on AS IT IS STACKED) |
 | **Backspace**, or TAKE OUT | take the chosen chip out of the open stack. It stays in the library |
-| Drag a stack by its pocket into the tray | SF-000 takes it at LOAD (the key beside SET UP on its library screen). Dragged out again, it is gone from the instrument at the next LOAD; its chips stay there. TO SF-000 on the bar does the same |
-| Drag a chip onto a knob bay | a **cue stack** on that knob (or one more chip in what the knob holds). In SF-000 the knob steps through the stack: a turn cues a chip, a press morphs to it |
-| Drag a stack or a macro by its pocket onto a knob bay | put it on that knob: a macro sweeps, a stack steps. KNOB on the bar does the same. From bay to bay moves it; out of the tray takes it off |
+| Drag a stack by its pocket onto the chassis, under its knobs | SF-000 takes it at LOAD (the key beside SET UP on its library screen). Dragged out again, it is gone from the instrument at the next LOAD; its chips stay there. TO SF-000 on the bar does the same |
+| Drag a chip onto a pocket of the chassis | a **cue stack** on that knob (or one more chip in what the knob holds). In SF-000 the knob steps through the stack: a turn cues a chip, a press morphs to it |
+| Drag a stack or a macro onto a pocket of the chassis | put it on that knob: a macro sweeps, a stack steps. KNOB on the bar does the same. From pocket to pocket moves it; out of the chassis takes it off |
+| Drag up or down on a module's knob | turn it: DEPTH sets how far a macro goes; TURN plays each chip it comes to |
 | The wheel | over the table, moves through the open stack; over the rack, turns its rows |
 | **/** | FIND, in what is dealt: names, tags, notes, effects |
 | **D** | the dark library, as the dark instrument. It starts as your computer is set, and stays as you leave it |
@@ -57,7 +67,7 @@ seven measures, and what can be made from it. The foot is for the marked.
 - **A cue stack** is any stack on a knob (its bay's number is on amber): a curated list the knob
   steps through. It is among the instrument's stacks as well.
 - **A song** is parts in a line: each a chip, how many BARS it lasts and how long the WAY IN takes.
-  In the tray it loads as an arrangement.
+  On the chassis it loads as an arrangement.
 - **Moods** (DEEP, DUB, DRIVING, HYPNOTIC, PEAK, SPARSE, DARK, BRIGHT, HEAVY, RESTLESS, WARM-UP)
   hold whatever fits them. Each is a place on the seven measures and how much each measure
   matters to it.
@@ -92,7 +102,7 @@ D1 database snapshot-library
   snapshots                an index for the page: name, time, the profile's measures, lanes, effects, tags, notes
   defs                     every definition a snapshot names (what each stored value was a position of)
   stacks                   one row a stack: its name, its kind, its chips in order (by uid), its rule if it
-                           fills itself, and for the tray: whether it loads, a macro's knob and depth
+                           fills itself, and for the chassis: whether it loads, a macro's knob and depth
 ```
 
 A stack only names its chips. A snapshot is never copied into one and never changed by one.
@@ -192,7 +202,7 @@ src/worker.js          the API: snapshots and clips in, the list, stacks, what S
 src/schema.js          the D1 tables, and the columns added since (the Worker adds what a table lacks)
 public/index.html      the bench
 public/js/main.js      what there is and what each press and drop means: chips, stacks, the open stack
-public/js/bench.js     the bench drawn and handled: the rack, the table, the tray, picking up and putting down
+public/js/bench.js     the bench drawn and handled: the rack, the table, the chassis and its knob modules, picking up and putting down
 public/js/look.js      the instrument's look: its finishes, light, room, glow and shapes (plates, keys' and knobs' parts)
 public/wear.png        the instrument's scratch sheet (SF-000's assets/wear.png, made by its tools/wear.py)
 public/js/stacks.js    the stacks that fill themselves: like, family, song, knob, moods, sittings, auto sort
@@ -211,7 +221,7 @@ changed or dropped, so a deploy cannot take a snapshot, a tag or a stack with it
 
 ## Not built yet
 
-- SF-000 does not read EXPORT's library file. Its **LOAD** takes the tray instead (the stacks,
+- SF-000 does not read EXPORT's library file. Its **LOAD** takes what is on the chassis instead (the stacks,
   the chips it lacks, macros onto knobs that hold nothing, a song as the arrangement if it has
   none); the file is for other tools.
 - **Putting chips away from the instrument.** A snapshot can name a sample that is only on the

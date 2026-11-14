@@ -8,7 +8,7 @@
 import * as THREE from '../vendor/three.min.js';
 import { faceCanvas, COL, NIGHT } from './card.js';
 import { heat } from './profile.js';
-import { PLATE, PANE, CASE, CORNER, UNIT, SUN, shared, surface, another, setRect, setMap, setColour, dropMap, litColour, makeRoom, slabGeo, plateGeo, Picture, loadWear } from './look.js';
+import { PLATE, PANE, CASE, CORNER, UNIT, SUN, shared, surface, another, setRect, setMap, setColour, dropMap, litColour, makeRoom, slabGeo, plateGeo, Picture, loadWear, KnobBatch, RING } from './look.js';
 
 // ---------------------------------------------------------------- sizes (a chip is 4.12 by 1: the card's own shape, and as thick as one of the instrument's plates)
 export const CW = 4.12, CD = 1.0, CT = PLATE;
@@ -18,14 +18,22 @@ const LABEL_D = 0.52;                                                  // a stac
 const RACK_PITCH_X = POCKET_W + 0.46, RACK_PITCH_Z = POCKET_D + LABEL_D + 0.78;
 const PILE_MOST = 0.95;                                                // the tallest a pile stands
 const STRATA = 96;                                                     // a pile is drawn as no more layers than this (a taller one's are too fine to see apart)
-const TRAY_W = 6.5, MARGIN = 0.55, LIP = 0.34;
+const MARGIN = 0.55, LIP = 0.34;
+// A knob module: a small plate with a name on a display and its two knobs, TURN and DEPTH (the
+// instrument's small ones). Sizes in the instrument's units, from its far left corner.
+const MOD = { w: 140, d: 88, name: [3, 3, 134, 22], knobs: [[94, 50], [122, 50]] };
+const MW = MOD.w / UNIT, MD = MOD.d / UNIT;
+// The chassis: the model of SF-000 the tray has become. Sixteen pockets, four by four, as its snapshot knobs are.
+const BAY_X = MW + 0.12, BAY_Z = MD + 0.2, CH = 0.42;                  // the pockets' pitch; how high its case stands on the bench
+const TRAY_W = 4 * BAY_X + 0.3;
 const RAIL = 0.3, RAIL_H = 0.2;                                        // the rails the rack's plate slides under
 const MINI = 0.3;                                                      // the tray's chips are a quarter the size
-const BAY_X = 1.55, BAY_Z = 1.22;
 const TILT = (57 * Math.PI) / 180, FOV = 26;
-const MIN_CHIP_PX = 236;
+const MIN_CHIP_PX = 226;
 
 const TEAL = '#4490A1';                                                // a sweeping knob's light on the instrument
+const KNOB_LIGHT = { macro: TEAL, cue: '#C5843F', learn: '#E9E6E2' };  // (a stack's knob steps: amber)
+const KNOB_KIND = { macro: 'MACRO', cue: 'CUE STACK', learn: 'KNOB MACRO' };
 const EDGE_NONE = '#9A9B96';                                           // a chip with no sound kept
 const edgeColour = (s) => (s && s.p ? heat(s.p.bright) : EDGE_NONE);
 const clamp = (x, lo, hi) => Math.min(hi, Math.max(lo, x));
@@ -76,6 +84,7 @@ export class Bench {
 
     this.rackPiles = []; this.trayData = { bays: [], stacks: [] }; this.dealt = []; this.items = new Map();
     this.faces = new Map();                                 // uid -> { tex, label, used }
+    this.knobSpots = []; this.turns = new Map();            // the modules' knobs, for the hand; and how far each TURN has been turned
     this.marks = { selected: null, playing: null, marked: new Set() };
     this.scroll = 0; this.scrollTo = 0; this.rackRow = 0; this.rackShift = 0;
     this.drag = null; this.hover = null; this.gap = -1;
@@ -106,13 +115,15 @@ export class Bench {
       badge: surface({ rough: 0.2, kind: 2 }),                                          // a name plate: one of the instrument's displays (glass; what it shows is light, whatever shade it stands in)
       yellow: surface({ rough: 0.5, kind: 3, emit: 0.85 }), green: surface({ rough: 0.5, kind: 3, emit: 0.85 }),      // lit, as a lit key is
       chip: surface({ kind: 1, worn: 1, rect: [0, 0, CW / 2, CD / 2] }),
+      module: surface({ kind: 1, worn: 1, rect: [0, 0, MW / 2, MD / 2] }),
       pile: surface({ rough: 0.62, clip: this.inRack }), mini: surface({ rough: 0.62 }),
     };
     this.box = new THREE.BoxGeometry(1, 1, 1);
     this.chipGeo = slabGeo(CW, CD, CT); this.chipGeo.translate(0, -CT / 2, 0);          // (a chip's place is its middle)
     this.layerGeo = slabGeo(CW, CD, 1, CORNER, 0, 4, 1, false);                         // one layer of a pile, as tall as it is made: its wall alone (its top is under the next)
     this.capGeo = slabGeo(CW, CD, 1, CORNER, 0, 4);                                     // the top layer of a small pile, which has a top
-    this.badgeGeos = new Map();
+    this.moduleGeo = slabGeo(MW, MD, PLATE);
+    this.badgeGeos = new Map(); this.modulePrints = new Map();
     this.paint();
   }
   // The bench's finishes, light or dark: each is its instrument's (the dark one's plates are worn, its case powder-coated).
@@ -124,7 +135,7 @@ export class Bench {
     const P = this.P;
     shared.uFinish.value = D ? 1 : 0;
     for (const x of [m.case, m.rail]) { setColour(x, P.body); x.uniforms.uRough.value = P.caseRough; }
-    for (const x of [m.rack, m.tray, m.chip]) { setColour(x, P.plate); x.uniforms.uRough.value = P.plateRough; }
+    for (const x of [m.rack, m.tray, m.chip, m.module]) { setColour(x, P.plate); x.uniforms.uRough.value = P.plateRough; }
     setColour(m.badge, P.badge);
     setColour(m.yellow, litColour(COL.yellow)); setColour(m.green, litColour(COL.green));
     for (const x of Object.values(m)) Object.assign(x.userData.spec, { colour: x.uniforms.uColour.value.clone(), rough: x.uniforms.uRough.value });
@@ -143,6 +154,8 @@ export class Bench {
     this.paint();
     for (const f of this.faces.values()) f.tex.dispose();
     this.faces.clear();
+    for (const t of this.modulePrints.values()) t.dispose();
+    this.modulePrints.clear();
     for (const it of this.items.values()) { it.textured = false; setColour(it.mat, this.P.plate); it.mat.uniforms.uRough.value = this.P.plateRough; }
     this.buildFixed(); this.buildRack(); this.buildTray(); this.place(false);
     this.poke();
@@ -284,6 +297,77 @@ export class Bench {
     this.room.material.uniforms.uBox.value.set(0, (L.zc0 + zEnd) / 2, half - inX, (zEnd - L.zc0) / 2 - inZ);
   }
 
+  // ---------------------------------------------------------------- a knob module
+  // What is printed on a module's plate: what kind of knob it is, how much it holds, and its two knobs' names.
+  modulePrint(kind, count) {
+    const key = `${kind}|${count}`;
+    let t = this.modulePrints.get(key);
+    if (t) return t;
+    const k = 3, D = this.dark, ink = D ? NIGHT.ink : COL.black;
+    t = plateTexture((g) => {
+      g.scale(k, k);
+      g.textBaseline = 'middle';
+      g.fillStyle = D ? NIGHT.badge : COL.black; g.fillRect(4, 31, 72, 17);
+      g.fillStyle = COL.lit; g.font = LEGEND(12.5); g.letterSpacing = '0.8px'; g.textAlign = 'left';
+      g.fillText(fitText(g, KNOB_KIND[kind] || 'KNOB', 64), 8, 40);
+      g.fillStyle = ink; g.font = LABEL(11.5); g.letterSpacing = '0.6px';
+      g.fillText(count, 5, 62);
+      g.textAlign = 'center'; g.font = LABEL(9.5); g.letterSpacing = '0.5px';
+      g.fillText('TURN', MOD.knobs[0][0], 76); g.fillText('DEPTH', MOD.knobs[1][0], 76);
+      g.letterSpacing = '0px';
+    }, MOD.w * k, MOD.d * k);
+    this.modulePrints.set(key, t);
+    return t;
+  }
+  // A module, its far left corner at x, z, standing on y. m: { kind, name, slot, depth, count, open }.
+  // Its knobs go into the batch its group's knobs are drawn from.
+  addModule(group, batch, m, x, y, z, clip = null) {
+    const plate = new THREE.Mesh(this.moduleGeo, another(this.mat.module, { map: this.modulePrint(m.kind, m.count), number: numberOf(`knob ${m.name} ${m.kind}`), clip }));
+    plate.position.set(x + MW / 2, y, z + MD / 2);
+    plate.castShadow = true; plate.receiveShadow = true; plate.userData = { mat: true };       // (its print is one of a few, kept: modulePrint())
+    group.add(plate);
+    // its name, on a display: with its knob's number before it once it is in the chassis
+    const D = this.dark, [nx, nz, nw, nd] = MOD.name, light = KNOB_LIGHT[m.kind] || TEAL;
+    const ground = m.open ? COL.yellow : D ? NIGHT.paper : COL.white;
+    const tex = plateTexture((g, w, h) => {
+      g.fillStyle = ground; g.fillRect(0, 0, w, h);
+      let tx = 10;
+      g.textBaseline = 'middle';
+      if (m.slot) {
+        g.fillStyle = light; g.fillRect(0, 0, 58, h);
+        g.fillStyle = COL.black; g.textAlign = 'center'; g.font = LEGEND(44); g.fillText(String(m.slot), 29, h / 2 + 3);
+        tx = 70;
+      }
+      g.textAlign = 'left'; g.fillStyle = D && !m.open ? NIGHT.ink : COL.black; g.font = LEGEND(42); g.letterSpacing = '1.5px';
+      g.fillText(fitText(g, String(m.name || 'UNNAMED').toUpperCase(), w - tx - 8), tx, h / 2 + 3);
+      g.letterSpacing = '0px';
+    }, nw * 3, nd * 3);
+    this.badge(group, tex, x + nx / UNIT, z + nz / UNIT, x + (nx + nw) / UNIT, z + (nz + nd) / UNIT, y + PLATE, { colour: ground, clip });
+    const turned = m.key ? this.turns.get(m.key) || 0 : 0;
+    const iT = batch.add(x + MOD.knobs[0][0] / UNIT, y + PLATE, z + MOD.knobs[0][1] / UNIT, turned, light, false);        // TURN: where the hand left it
+    const iD = batch.add(x + MOD.knobs[1][0] / UNIT, y + PLATE, z + MOD.knobs[1][1] / UNIT, m.kind === 'cue' ? 0 : m.depth ?? 1, '#E9E6E2', true);      // DEPTH: how far it is up (a stack's knob has none)
+    // (where each knob is, for the hand: the group's own place, a little above the plate)
+    if (m.key && group !== this.held) for (const [which, i, at] of [['turn', iT, MOD.knobs[0]], ['depth', iD, MOD.knobs[1]]]) {
+      if (which === 'depth' && m.kind === 'cue') continue;
+      this.knobSpots.push({ key: m.key, which, batch, i, group, x: x + at[0] / UNIT, y: y + PLATE + 0.16, z: z + at[1] / UNIT });
+    }
+  }
+  // The knob of a module under the pointer, if there is one.
+  knobUnder(e) {
+    for (const k of this.knobSpots) {
+      const dz = k.group === this.rack ? this.rackShift : 0;
+      if (k.group === this.rack && (k.z + dz > this.L.zr1 || k.z + dz < this.L.zf0)) continue;
+      const g = this.ground(e, k.y);
+      if (Math.hypot(g.x - k.x, g.z - (k.z + dz)) < RING * 1.1) return k;
+    }
+    return null;
+  }
+  // Where a module's knob is in the window (for the checks). inTray: the one in the chassis, not the rack's.
+  whereKnob(key, which, inTray = false) {
+    const k = this.knobSpots.find((s) => s.key === key && s.which === which && (s.group === this.tray) === inTray);
+    return k ? this.screenOf(k.x, k.y, k.z + (k.group === this.rack ? this.rackShift : 0)) : null;
+  }
+
   // ---------------------------------------------------------------- the rack: pockets, piles, their plates
   // piles: [{ key, name, count, tone, heats: [bright or -1, top first], top: chip or null, lamp, open, add }]
   setRack(piles) { this.rackPiles = piles; this.rackRow = clamp(this.rackRow, 0, this.rackRowsMost()); this.buildRack(); this.poke(); this.tellRows(); }
@@ -301,6 +385,7 @@ export class Bench {
   buildRack() {
     const L = this.L, piles = this.rackPiles;
     this.clear(this.rack);
+    this.knobSpots = this.knobSpots.filter((k) => k.group !== this.rack);
     this.rackHits = [];
     const rows = Math.max(L.rackRows, Math.ceil(piles.length / L.rackCols));
     // (the plate runs on under the rails, so that slid back it still fills the space between them)
@@ -323,6 +408,7 @@ export class Bench {
     const inst = new THREE.InstancedMesh(this.layerGeo, this.mat.pile, Math.max(1, total));
     inst.castShadow = true; inst.receiveShadow = true;
     const m4 = new THREE.Matrix4(), c = new THREE.Color();
+    const knobs = new KnobBatch({ dark: this.dark, clip: this.inRack });
     let n = 0;
     piles.forEach((p, i) => {
       const { x, z, row } = at(i);
@@ -342,6 +428,8 @@ export class Bench {
         chip.userData = { mat: true };                              // (its face is the cache's: face())
         this.rack.add(chip);
       }
+      // a knob: its module rides on the chips it works with (or lies in the cut-out, if it has none)
+      if (p.knob) this.addModule(this.rack, knobs, { ...p.knob, name: p.name, key: p.key }, cx - CW / 2, top, cz - MD / 2, this.inRack);
       // its plate: the name, how many, and what it is
       const tone = this.plateTone(p);
       const tex = plateTexture((g, w, h) => this.drawPlate(g, w, h, p, tone), 736, 84);
@@ -351,8 +439,9 @@ export class Bench {
         const sides = [[x - e, z - e, x + POCKET_W + e, z], [x - e, z + POCKET_D, x + POCKET_W + e, z + POCKET_D + e], [x - e, z, x, z + POCKET_D], [x + POCKET_W, z, x + POCKET_W + e, z + POCKET_D]];
         sides.forEach(([a, b, cc, d], k) => { this.bar(this.rack, lit, a, b, cc, d, PLATE, y1, k === 0).castShadow = false; });
       }
-      this.rackHits.push({ key: p.key, pile: p, row, x0: x - 0.2, x1: x + POCKET_W + 0.2, z0: z - 0.15, z1: z + POCKET_D + LABEL_D + 0.2, top, cx, cz });
+      this.rackHits.push({ key: p.key, pile: p, row, x0: x - 0.2, x1: x + POCKET_W + 0.2, z0: z - 0.15, z1: z + POCKET_D + LABEL_D + 0.2, top: top + (p.knob ? PLATE + 0.25 : 0), cx, cz });
     });
+    knobs.addTo(this.rack);
     inst.count = n;
     inst.instanceMatrix.needsUpdate = true; if (inst.instanceColor) inst.instanceColor.needsUpdate = true;
     this.rack.add(inst);
@@ -399,22 +488,27 @@ export class Bench {
   // tray: { bays: [16 x { key or null, name, heats }], stacks: [{ key, name, count, heats }] }
   setTray(tray) { this.trayData = tray; this.buildTray(); this.poke(); }
 
+  // The chassis: a model of SF-000 standing on the bench. Its sixteen pockets are its sixteen
+  // snapshot knobs, four by four as the instrument has them; a knob module dropped in one is on
+  // that knob at the next LOAD. Under them, the stacks LOAD brings.
   buildTray() {
     const L = this.L, T = this.trayData, x0 = L.trayX, x1 = x0 + TRAY_W, z0 = L.zt0 - 0.05, D = this.dark;
     this.clear(this.tray);
+    this.knobSpots = this.knobSpots.filter((k) => k.group !== this.tray);
     this.trayHits = [];
-    const zEnd = L.zNear + 4;
-    // its plate, standing on the case, with a cut-out for each bay and each stack
+    const zEnd = L.zNear + 4, top = CH + PLATE;
+    this.block(this.tray, this.mat.rail, x0, z0, x1, zEnd, 0, CH, 0.3, 4.5 / UNIT);                // its own case
     const mw = CW * MINI + 0.14, md = CD * MINI + 0.12;
-    const bayAt = (i) => ({ x: x0 + 0.2 + (i % 4) * BAY_X, z: z0 + 0.62 + Math.floor(i / 4) * BAY_Z });
+    const bayAt = (i) => ({ x: x0 + 0.21 + (i % 4) * BAY_X, z: z0 + 0.74 + Math.floor(i / 4) * BAY_Z });
     const holes = [];
-    for (let i = 0; i < 16; i++) { const b = bayAt(i); holes.push({ x: b.x + 0.04, z: b.z + 0.08, w: mw, d: md }); }
-    const zs = z0 + 0.62 + 4 * BAY_Z + 0.56;                         // the loaded stacks begin here
+    for (let i = 0; i < 16; i++) { const b = bayAt(i); holes.push({ x: b.x - 0.04, z: b.z - 0.04, w: MW + 0.08, d: MD + 0.08 }); }
+    const zs = z0 + 0.74 + 4 * BAY_Z + 0.5;                          // the loaded stacks begin here
     const room = Math.max(1, Math.floor((L.zNear - 0.2 - zs) / 0.6));
     const stacks = (T.stacks || []).slice(0, room);
     stacks.forEach((s, i) => holes.push({ x: x0 + 0.3, z: zs + i * 0.6 + 0.06, w: mw, d: md }));
-    setRect(this.mat.tray, [(x0 + x1) / 2, (z0 + zEnd) / 2, TRAY_W / 2, (zEnd - z0) / 2]);
-    const plate = new THREE.Mesh(plateGeo(x0, z0, x1, zEnd, PLATE, PLATE, holes), this.mat.tray);
+    const px0 = x0 + 0.07, pz0 = z0 + 0.07, px1 = x1 - 0.07;
+    setRect(this.mat.tray, [(px0 + px1) / 2, (pz0 + zEnd) / 2, (px1 - px0) / 2, (zEnd - pz0) / 2]);
+    const plate = new THREE.Mesh(plateGeo(px0, pz0, px1, zEnd, top, PLATE, holes), this.mat.tray);
     plate.receiveShadow = true; plate.castShadow = true; plate.userData = { geo: true };
     this.tray.add(plate);
 
@@ -424,34 +518,32 @@ export class Bench {
         g.fillText(text, 18, h / 2 + 2);
         if (sub) { g.font = LABEL(24); g.textAlign = 'right'; g.letterSpacing = '2px'; g.fillText(sub, w - 16, h / 2 + 2); }
         g.letterSpacing = '0px';
-      }, 912, 60);
-      this.badge(this.tray, tex, x0 + 0.2, z, x1 - 0.2, z + 0.4, PLATE);
+      }, 1160, 60);
+      this.badge(this.tray, tex, x0 + 0.21, z, x1 - 0.21, z + 0.4, top);
     };
-    title('SF-000', z0 + 0.12, 'WHAT LOAD BRINGS: KNOBS 1 TO 16');
+    title('SF-000', z0 + 0.2, 'ITS SIXTEEN SNAPSHOT KNOBS, AS LOAD LEAVES THEM');
 
-    const made = [];
-    const pile = (heats, cx, cz) => made.push({ ...this.strata((heats || []).slice(0, 4000), 0.06, 0.6), cx, cz });
+    const knobs = new KnobBatch({ dark: D });
     for (let i = 0; i < 16; i++) {
       const b = bayAt(i), bay = (T.bays || [])[i] || {};
-      pile(bay.heats, b.x + 0.04 + mw / 2, b.z + 0.08 + md / 2);
-      const ground = bay.open ? COL.yellow : bay.key ? (D ? NIGHT.paper : COL.white) : D ? NIGHT.plate2 : COL.grey;
-      const tex = plateTexture((g, w, h) => {
-        g.fillStyle = ground; g.fillRect(0, 0, w, h);
-        // its number: on teal where the knob holds a macro (it sweeps), on amber where it holds a stack (it steps), as the instrument lights them
-        g.fillStyle = bay.key ? (bay.sweeps ? TEAL : COL.amber) : D ? NIGHT.badge : COL.black; g.fillRect(0, 0, 52, h);
-        g.textBaseline = 'middle'; g.textAlign = 'center'; g.fillStyle = bay.key ? COL.black : D ? NIGHT.dim : COL.lit; g.font = LEGEND(40);
-        g.fillText(String(i + 1), 26, h / 2 + 2);
-        g.textAlign = 'left'; g.fillStyle = D && !bay.open ? NIGHT.ink : COL.black; g.font = LEGEND(36); g.letterSpacing = '1px';
-        g.fillText(fitText(g, String(bay.name || '').toUpperCase(), w - 64), 60, h / 2 + 2);
-        g.letterSpacing = '0px';
-      }, 240, 56);
-      this.badge(this.tray, tex, b.x + 0.04, b.z + 0.08 + md + 0.1, b.x + 0.04 + mw, b.z + 0.08 + md + 0.44, PLATE, { colour: ground });
-      this.trayHits.push({ bay: i + 1, key: bay.key || null, pile: bay, x0: b.x - 0.04, x1: b.x + BAY_X - 0.04, z0: b.z, z1: b.z + BAY_Z, cx: b.x + 0.04 + mw / 2, cz: b.z + 0.3 });
+      if (bay.key && bay.knob) this.addModule(this.tray, knobs, { ...bay.knob, name: bay.name, slot: i + 1, open: bay.open, key: bay.key }, b.x, CH, b.z);
+      else {
+        // an empty pocket: its number, on the floor of it
+        const tex = plateTexture((g, w, h) => {
+          g.textBaseline = 'middle'; g.textAlign = 'center'; g.fillStyle = D ? NIGHT.dim : COL.lit; g.font = LEGEND(44);
+          g.fillText(String(i + 1), w / 2, h / 2 + 3);
+        }, 84, 60);
+        this.badge(this.tray, tex, b.x + 0.06, b.z + 0.06, b.x + 0.48, b.z + 0.36, CH, { colour: D ? NIGHT.badge : COL.black });
+      }
+      this.trayHits.push({ bay: i + 1, key: bay.key || null, pile: bay, x0: b.x - 0.06, x1: b.x + BAY_X - 0.06, z0: b.z - 0.1, z1: b.z + BAY_Z - 0.1, cx: b.x + MW / 2, cz: b.z + MD / 2 });
     }
-    title('POCKETS', zs - 0.48, stacks.length < (T.stacks || []).length ? `${stacks.length} OF ${T.stacks.length} SHOWN` : 'DROP A STACK HERE TO LOAD IT');
+    knobs.addTo(this.tray);
+
+    title('LIBRARY', zs - 0.48, stacks.length < (T.stacks || []).length ? `${stacks.length} OF ${T.stacks.length} SHOWN` : 'DROP A STACK HERE: LOAD BRINGS IT');
+    const made = [];
     stacks.forEach((s, i) => {
       const z = zs + i * 0.6;
-      pile(s.heats, x0 + 0.3 + mw / 2, z + 0.06 + md / 2);
+      made.push({ ...this.strata((s.heats || []).slice(0, 4000), 0.06, 0.6), cx: x0 + 0.3 + mw / 2, cz: z + 0.06 + md / 2 });
       const ground = s.open ? COL.yellow : D ? NIGHT.paper : COL.white;
       const tex = plateTexture((g, w, h) => {
         g.fillStyle = ground; g.fillRect(0, 0, w, h);
@@ -460,8 +552,8 @@ export class Bench {
         g.textAlign = 'right'; g.fillText(count, w - 12, h / 2 + 2);
         g.textAlign = 'left'; g.fillText(fitText(g, String(s.name || '').toUpperCase(), w - g.measureText(count).width - 40), 12, h / 2 + 2);
         g.letterSpacing = '0px';
-      }, 736, 52);
-      this.badge(this.tray, tex, x0 + 0.3 + mw + 0.14, z + 0.07, x1 - 0.22, z + 0.07 + md - 0.02, PLATE, { colour: ground });
+      }, 960, 52);
+      this.badge(this.tray, tex, x0 + 0.3 + mw + 0.14, z + 0.07, x1 - 0.26, z + 0.07 + md - 0.02, top, { colour: ground });
       this.trayHits.push({ stack: true, key: s.key, pile: s, x0, x1, z0: z, z1: z + 0.6, cx: x0 + 3, cz: z + 0.3 });
     });
     this.trayHits.push({ pockets: true, key: null, x0, x1, z0: zs - 0.5, z1: zEnd, cx: x0 + TRAY_W / 2, cz: Math.min(L.zNear - 0.8, zs + stacks.length * 0.6 + 0.6) });
@@ -474,7 +566,7 @@ export class Bench {
       let n = 0;
       for (const s of made) s.layers.forEach((b, k) => {
         if (!want(k)) return;
-        m4.makeScale(MINI, s.t * 0.92, MINI); m4.setPosition(s.cx, (s.layers.length - 1 - k) * s.t, s.cz);
+        m4.makeScale(MINI, s.t * 0.92, MINI); m4.setPosition(s.cx, CH + (s.layers.length - 1 - k) * s.t, s.cz);
         inst.setMatrixAt(n, m4); inst.setColorAt(n, c.set(b < 0 ? EDGE_NONE : heat(b))); n++;
       });
       inst.count = n; inst.instanceMatrix.needsUpdate = true; if (inst.instanceColor) inst.instanceColor.needsUpdate = true;
@@ -687,8 +779,9 @@ export class Bench {
       const h = (this.rackHits || []).find((p) => g.x >= p.x0 && g.x <= p.x1 && z >= p.z0 && z <= p.z1 && p.row >= this.rackRow - 0.5 && p.row < this.rackRow + L.rackRows);
       return h ? { type: 'pile', key: h.key, pile: h.pile } : { type: 'rack' };
     }
-    if (g.x >= L.trayX - 0.1 && g.z >= L.zt0 - 0.1) {
-      const h = (this.trayHits || []).find((p) => g.x >= p.x0 && g.x <= p.x1 && g.z >= p.z0 && g.z <= p.z1);
+    const gt = this.ground(e, CH + PLATE);                             // (the chassis stands higher than the bench)
+    if (gt.x >= L.trayX && gt.z >= L.zt0 - 0.05) {
+      const h = (this.trayHits || []).find((p) => gt.x >= p.x0 && gt.x <= p.x1 && gt.z >= p.z0 && gt.z <= p.z1);
       if (h && h.bay) return { type: 'bay', slot: h.bay, key: h.key, pile: h.pile };
       if (h && h.stack) return { type: 'pile', key: h.key, pile: h.pile, inTray: true };
       return { type: 'tray' };
@@ -703,13 +796,35 @@ export class Bench {
     const c = this.canvas;
     c.addEventListener('pointerdown', (e) => {
       if (e.button !== 0) return;
+      const kn = this.knobUnder(e);
+      if (kn) {                                                      // a hand on a module's knob: it turns (up for more), and nothing is picked up
+        this.turning = { k: kn, y: e.clientY, v: kn.batch.knobs[kn.i].v, moved: false };
+        c.setPointerCapture(e.pointerId); c.style.cursor = 'ns-resize';
+        return;
+      }
       const u = this.under(e);
       this.down = { x: e.clientX, y: e.clientY, u, shift: e.shiftKey || e.metaKey || e.ctrlKey };
       c.setPointerCapture(e.pointerId);
     });
     c.addEventListener('pointermove', (e) => {
+      if (this.turning) {
+        const t = this.turning, v = clamp(t.v + (t.y - e.clientY) / 150, 0, 1);
+        if (v !== t.k.batch.knobs[t.k.i].v) {
+          t.moved = true;
+          t.k.batch.set(t.k.i, v);
+          if (t.k.which === 'turn') this.turns.set(t.k.key, v);
+          this.on.turn?.(t.k.key, t.k.which, v, false);
+          this.poke();
+        }
+        return;
+      }
       if (this.down && !this.drag && Math.hypot(e.clientX - this.down.x, e.clientY - this.down.y) > 6) this.startDrag(e);
       if (this.drag) { this.moveDrag(e); return; }
+      if (this.knobUnder(e)) {                                      // over a module's knob: it is for turning
+        if (this.hover) { this.hover = null; this.place(false); this.poke(); this.on.hover?.(null); }
+        c.style.cursor = 'ns-resize';
+        return;
+      }
       const u = this.under(e);
       const key = u.type === 'chip' ? u.item.id : u.type === 'pile' ? `p${u.key}` : u.type === 'bay' ? `b${u.slot}` : '';
       if (key !== (this.hover ? this.hover.key : '')) {
@@ -720,6 +835,11 @@ export class Bench {
       }
     });
     const up = (e) => {
+      if (this.turning) {
+        const t = this.turning; this.turning = null; c.style.cursor = 'default';
+        this.on.turn?.(t.k.key, t.k.which, t.k.batch.knobs[t.k.i].v, true, t.moved);
+        return;
+      }
       const down = this.down; this.down = null;
       if (this.drag) { this.endDrag(e); return; }
       if (!down) return;
@@ -730,7 +850,7 @@ export class Bench {
       else this.on.nothing?.();
     };
     c.addEventListener('pointerup', up);
-    c.addEventListener('pointercancel', () => { this.down = null; this.cancelDrag(); });
+    c.addEventListener('pointercancel', () => { this.down = null; this.turning = null; this.cancelDrag(); });
     c.addEventListener('dblclick', (e) => { const u = this.under(e); if (u.type === 'chip') this.on.chipTwice?.(u.uid); });
     c.addEventListener('wheel', (e) => {
       e.preventDefault();
@@ -767,7 +887,12 @@ export class Bench {
       this.held.rotation.set(0, 0, -0.035);
     } else if ((u.type === 'pile' || u.type === 'bay') && u.key && !(u.pile && u.pile.add)) {             // (a knob's macro is picked up by its bay)
       this.drag = { kind: 'pile', key: u.key, on: true, at: this.ground(e, 1) };
-      const heats = (u.pile && u.pile.heats ? u.pile.heats : []).slice(0, 14);
+      const heats = (u.pile && u.pile.knob ? [] : u.pile && u.pile.heats ? u.pile.heats : []).slice(0, 14);
+      if (u.pile && u.pile.knob) {                                   // a knob: its module comes up
+        const batch = new KnobBatch({ dark: this.dark });
+        this.addModule(this.held, batch, { ...u.pile.knob, name: u.pile.name, slot: u.type === 'bay' ? u.slot : u.pile.knob.slot }, -MW / 2, 0, -MD / 2);
+        batch.addTo(this.held);
+      }
       heats.forEach((b, i) => {
         const tint = b < 0 ? EDGE_NONE : heat(b);
         const m = new THREE.Mesh(this.chipGeo, another(this.mat.mini, { colour: i === 0 ? this.P.plate : tint, edge: tint, rough: i === 0 ? this.P.plateRough : 0.62 }));
@@ -814,12 +939,13 @@ export class Bench {
   whereChip(index) { const p = this.spot(index); return this.screenOf(p.x, CT, p.z); }
   wherePile(key, onPlate = false) {
     const h = (this.rackHits || []).find((p) => p.key === key);
-    if (h) return this.screenOf(h.cx, onPlate ? 0 : Math.max(0, h.top), (onPlate ? h.z1 - 0.45 : h.cz) + this.rackShift);
+    // (a knob's pile is pressed beside its module, where its top chip shows: on the module are its knobs, which turn)
+    if (h) return this.screenOf(h.cx + (h.pile.knob && !onPlate ? CW * 0.3 : 0), onPlate ? 0 : Math.max(0, h.top - (h.pile.knob ? PLATE + 0.25 : 0)), (onPlate ? h.z1 - 0.45 : h.cz) + this.rackShift);
     const t = (this.trayHits || []).find((p) => p.key === key && (p.stack || p.bay));
-    return t ? this.screenOf(t.cx, PLATE, t.cz) : null;
+    return t ? this.screenOf(t.cx, CH + PLATE, t.cz) : null;
   }
-  whereBay(slot) { const t = (this.trayHits || []).find((p) => p.bay === slot); return t ? this.screenOf(t.cx, PLATE, t.cz) : null; }
-  whereTray() { const t = (this.trayHits || []).find((p) => p.pockets); return this.screenOf(t.cx, PLATE, t.cz); }
+  whereBay(slot) { const t = (this.trayHits || []).find((p) => p.bay === slot); return t ? this.screenOf(t.cx, CH + PLATE, t.cz) : null; }
+  whereTray() { const t = (this.trayHits || []).find((p) => p.pockets); return this.screenOf(t.cx, CH + PLATE, t.cz); }
   wholeRows() { return this.L.wholeRows; }
   columns() { return this.L.cols; }
 }
