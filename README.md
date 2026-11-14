@@ -17,6 +17,12 @@ itself, the **table**: the open stack dealt out face up. On the right, the **cha
 of SF-000 standing on the bench, with sixteen pockets, four by four, for its sixteen snapshot
 knobs, and under them the stacks LOAD brings.
 
+The chassis is what the instrument carries for a show. **LOAD** in SF-000 makes its sixteen
+knobs what the sixteen pockets hold: a module put in a pocket takes that knob, one taken out
+comes off it. Nothing is lost by that: what a knob held is sent up here first, as a module in
+the rack, if the library has not got it. A knob made on the instrument that has never been here
+arrives in its own pocket. The library keeps everything; the chassis says what goes to the show.
+
 A knob is a **module**: a small plate with its name on a display and the instrument's two knobs,
 TURN and DEPTH. A macro is always one (it rides on the pile of chips it sweeps through); a stack
 becomes one when it goes on a knob (a cue stack: it steps). Dropped in a pocket of the chassis,
