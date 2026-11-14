@@ -112,8 +112,9 @@ assert.deepEqual(cleanTags([' Dark ', 'dark', 'Rolling, low', '', 'x'.repeat(60)
   // the module's places: 1 to 4 take a macro knob (a knob's moves), 5 to 16 a stack of chips; a song or a rule stack none
   const links = { links: [{ c: 'bass.cutoff', d: 0.4 }] };
   const learn = { kind: 'learn', items: [], extra: links }, stack = { kind: 'stack', items: [{ u: a }], extra: null }, old = { kind: 'macro', items: [{ u: a }], extra: links };
-  assert.deepEqual([1, 4, 5, 16].map((n) => fitsPlace(learn, n)), [true, true, false, false]);
-  assert.deepEqual([1, 4, 5, 16].map((n) => fitsPlace(stack, n)), [false, false, true, true]);
+  assert.deepEqual([1, 4, 5, 15, 13, 16].map((n) => fitsPlace(learn, n)), [true, true, false, false, false, false]);
+  assert.deepEqual([1, 4, 5, 12, 14, 15].map((n) => fitsPlace(stack, n)), [false, false, true, true, true, true]);
+  assert.deepEqual([13, 16].map((n) => fitsPlace(stack, n)), [false, false], '13 and 16 take no knob: on the E16 they are the lane wheel and OPEN');
   assert.deepEqual([4, 5].map((n) => fitsPlace(old, n)), [false, true], 'a macro from before the two kinds is a stack if it has chips');
   assert.equal(fitsPlace({ kind: 'macro', items: [], extra: links }, 2), true, 'and a macro knob if it has only moves');
   assert.deepEqual([fitsPlace({ kind: 'song', items: [{ u: a }] }, 6), fitsPlace({ kind: 'rule', items: [{ u: a }] }, 6)], [false, false]);
@@ -123,6 +124,8 @@ assert.deepEqual(cleanTags([' Dark ', 'dark', 'Rolling, low', '', 'x'.repeat(60)
   assert.deepEqual(tidyPlan([at('s1', 1, stack), at('s2', 2, old), at('k3', 3, learn), at('s6', 6, stack), at('k7', 7, learn), at('s9', 9, stack)]),
     [['s1', 5], ['s2', 7], ['k7', 1]], 'stacks on 1 and 2 go to 5 and 7 (6 is taken); the macro knob on 7 goes to 1; those in place are left');
   assert.deepEqual(tidyPlan([at('s5', 5, stack), at('k2', 2, learn)]), [], 'a module already right is not touched');
+  assert.deepEqual(tidyPlan([at('s5', 5, stack), at('s13', 13, stack), at('s15', 15, stack), at('s16', 16, stack)]), [['s13', 6], ['s16', 7]], 'a stack on 13 or 16 goes to the first free stack place, in order');
+  assert.deepEqual(tidyPlan([5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15].map((n) => at(`s${n}`, n, stack))), [['s13', null]], 'with all ten taken, it comes off the module');
   assert.deepEqual(tidyPlan([at('k5', 5, learn), at('k1', 1, learn), at('k2', 2, learn), at('k3', 3, learn), at('k4', 4, learn)]), [['k5', null]], 'no macro place left: it comes off the module');
   assert.deepEqual(tidyPlan([at('song', 6, { kind: 'song', items: [{ u: a }] })]), [['song', null]]);
 

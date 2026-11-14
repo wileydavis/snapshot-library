@@ -19,10 +19,14 @@ const linksOf = (s) => (s.extra && Array.isArray(s.extra.links) ? s.extra.links 
   .slice(0, 64).map((l) => ({ c: l.c, d: Math.max(-1, Math.min(1, Number(l.d))) }));
 const MAX_ITEMS = 5000;                 // chips in one stack
 // The module SF-000 carries (its sixteen snapshot knobs): places 1 to 4 take a macro knob (kind
-// "learn": a knob's moves, no chips), places 5 to 16 a stack knob (chips in an order, each with
+// "learn": a knob's moves, no chips), places 5 to 12, 14 and 15 a stack knob (chips in an order, each with
 // the parts of the rig it takes). A "macro" from before the two kinds is a stack if it has chips.
 const MACRO_PLACES = 4;
-const placeKind = (slot) => (slot <= MACRO_PLACES ? 'macro' : 'stack');
+// The module's sixteen places: 1 to 4 take a macro knob; 5 to 12, 14 and 15 a stack knob; 13 and 16 take nothing (on the
+// E16 those two corners are the lane wheel and OPEN on every page, so no knob of the module is on them).
+const CORNERS = [13, 16];
+const STACK_PLACES = [5, 6, 7, 8, 9, 10, 11, 12, 14, 15];
+const placeKind = (slot) => (slot <= MACRO_PLACES ? 'macro' : CORNERS.includes(slot) ? 'none' : 'stack');
 const knobKind = (s) => (s.kind === 'learn' || (s.kind === 'macro' && !s.items.length && linksOf(s).length) ? 'macro'
   : s.kind === 'stack' || s.kind === 'macro' ? 'stack' : null);                 // (null: a song or a rule stack goes on no knob)
 // The parts of the rig a chip of a stack does not take: a lane by its key, then "returns", "bus",
@@ -516,7 +520,7 @@ function newId() {
 }
 
 // A stack may be given a place on the module only if the place takes its kind: 1 to 4 a macro knob,
-// 5 to 16 a stack knob. Exported for the tests.
+// 5 to 12, 14 and 15 a stack knob; 13 and 16 nothing. Exported for the tests.
 export function fitsPlace(stack, slot) { const k = knobKind(stack); return k !== null && k === placeKind(slot); }
 
 // The module put right, by the rule SF-000 brings its own knobs over by (so the two still agree
@@ -532,7 +536,7 @@ export function tidyPlan(rows) {
     if (stay.has(r.id)) continue;
     const kind = knobKind(r);
     let to = null;
-    if (kind) for (let n = kind === 'macro' ? 1 : MACRO_PLACES + 1; n <= (kind === 'macro' ? MACRO_PLACES : 16); n++) if (!taken.has(n)) { to = n; break; }
+    if (kind) for (let n = 1; n <= 16; n++) if (placeKind(n) === kind && !taken.has(n)) { to = n; break; }
     if (to) taken.add(to);
     moves.push([r.id, to]);
   }
@@ -572,7 +576,7 @@ async function makeStack(request, env) {
     f.pos = (last && typeof last.p === 'number' ? last.p : 0) + 1;
   }
   const parse = (t, d) => { try { return t ? JSON.parse(t) : d; } catch { return d; } };
-  if (f.slot && !fitsPlace({ kind: f.kind || 'stack', items: parse(f.items, []), extra: parse(f.extra, null) }, f.slot)) return json({ error: 'that place of the module takes the other kind', macro_places: MACRO_PLACES }, 400);
+  if (f.slot && !fitsPlace({ kind: f.kind || 'stack', items: parse(f.items, []), extra: parse(f.extra, null) }, f.slot)) return json({ error: CORNERS.includes(f.slot) ? 'places 13 and 16 of the module take no knob' : 'that place of the module takes the other kind', macro_places: MACRO_PLACES, stack_places: STACK_PLACES }, 400);
   const stmts = [];
   if (f.slot) stmts.push(env.DB.prepare('UPDATE stacks SET slot = NULL, updated_at = ? WHERE slot = ? AND id <> ?').bind(now, f.slot, id));
   stmts.push(env.DB.prepare(
@@ -599,7 +603,7 @@ async function changeStack(request, env, id) {
     // (the place it is in, or is being given, has to take what it will be after this change. One that no longer fits where it sits comes off the module.)
     const parse = (t, d) => { try { return t ? JSON.parse(t) : d; } catch { return d; } };
     const after = { kind: f.kind || was.kind, items: parse(f.items !== undefined ? f.items : was.items, []), extra: parse(f.extra !== undefined ? f.extra : was.extra, null) };
-    if (f.slot && !fitsPlace(after, f.slot)) return json({ error: 'that place of the module takes the other kind', macro_places: MACRO_PLACES }, 400);
+    if (f.slot && !fitsPlace(after, f.slot)) return json({ error: CORNERS.includes(f.slot) ? 'places 13 and 16 of the module take no knob' : 'that place of the module takes the other kind', macro_places: MACRO_PLACES, stack_places: STACK_PLACES }, 400);
     if (f.slot === undefined && was.slot && !fitsPlace(after, was.slot)) { f.slot = null; keys.push('slot'); }
   }
   const stmts = [];
@@ -621,7 +625,7 @@ async function removeStack(env, id, forget) {
 }
 
 // What SF-000 takes at LOAD: the module (what is in each of its sixteen places: a macro knob in 1
-// to 4, a stack knob in 5 to 16, each chip of a stack with the parts of the rig it does not take),
+// to 4, a stack knob in 5 to 12, 14 or 15, each chip of a stack with the parts of the rig it does not take),
 // and every stack marked for the instrument's own library screen with the chips it holds now. Each
 // chip is named with what the instrument needs to know before it asks for the snapshot itself
 // (GET /api/snapshots/<uid>) and its clip: its name here, whether it has a clip.
@@ -638,7 +642,7 @@ async function load(env) {
     for (const r of got.results) chips[r.uid] = { name: r.name, clip: !!r.has_clip, tags: r.tags ? r.tags.split(',') : [], at: r.updated_at };
   }
   const here = (s) => s.items.filter((it) => chips[it.u]);              // (a chip removed from the library since is not loaded)
-  const out = { load: 2, at: Date.now(), macro_places: MACRO_PLACES, stacks: [], knobs: [], chips };
+  const out = { load: 2, at: Date.now(), macro_places: MACRO_PLACES, stack_places: STACK_PLACES, stacks: [], knobs: [], chips };
   for (const s of all) {
     const items = here(s);
     if (s.slot && fitsPlace(s, s.slot)) {

@@ -56,12 +56,13 @@ function itemsOf(s) {
 const allByTime = () => cached('all', () => [...state.all].sort((a, b) => rules.when(b) - rules.when(a)).map((s) => ({ u: s.uid })));
 const sittings = () => cached('sittings', () => rules.sittings(state.all));
 const KIND = { stack: '', macro: 'STACK', song: 'SONG', rule: 'RULE', learn: 'MACRO' };
-// SF-000's snapshot module: its places 1 to 4 take a macro knob (a knob's moves), 5 to 16 a stack knob (chips in an order).
+// SF-000's snapshot module: its places 1 to 4 take a macro knob (a knob's moves); 5 to 12, 14 and 15 a stack knob (chips in an order).
 const MACRO_PLACES = 4, STACK_MOST = 128;
-const placeKind = (slot) => (slot <= MACRO_PLACES ? 'macro' : 'stack');
+// (13 and 16 take nothing: on the E16 those corners are the lane wheel and OPEN on every page)
+const placeKind = (slot) => (slot <= MACRO_PLACES ? 'macro' : slot === 13 || slot === 16 ? 'none' : 'stack');
 const plain = (s) => !!s && (s.kind === 'stack' || s.kind === 'macro');          // a stack of chips of your own (one called a macro, from before the two kinds, is one)
 const knobKindOf = (s) => (!s ? null : s.kind === 'learn' || (s.kind === 'macro' && !(s.items || []).length && linksOf(s).length) ? 'macro' : plain(s) ? 'stack' : null);
-const freePlace = (kind) => { for (let n = kind === 'macro' ? 1 : MACRO_PLACES + 1; n <= (kind === 'macro' ? MACRO_PLACES : 16); n++) if (!state.stacks.some((x) => x.slot === n)) return n; return 0; };
+const freePlace = (kind) => { for (let n = 1; n <= 16; n++) if (placeKind(n) === kind && !state.stacks.some((x) => x.slot === n)) return n; return 0; };
 const buildStack = () => (state.build ? state.stacks.find((x) => x.id === state.build && plain(x)) || null : null);
 const withOff = (it, off) => { const { off: was, ...rest } = it; void was; return off && off.length ? { ...rest, off } : rest; };
 const names = (parts) => parts.map(partName).join(', ');
@@ -235,7 +236,7 @@ function showBar() {
   load.hidden = !!(s && (s.kind === 'macro' || s.kind === 'learn'));
   load.disabled = !s;
   load.setAttribute('aria-pressed', String(!!s && inList(s)));
-  // (the knob it is on: 1 to 4 for a macro knob, 5 to 16 for a stack knob. DEPTH is a macro knob's.)
+  // (the knob it is on: 1 to 4 for a macro knob; 5 to 12, 14 or 15 for a stack knob. DEPTH is a macro knob's.)
   const kk = knobKindOf(s);
   $('s-knob-field').hidden = !kk; $('s-depth-field').hidden = kk !== 'macro';
   if (kk) {
@@ -623,8 +624,9 @@ const SEND_STACK = 'TO SF-000';          // the stack that chips dropped on the 
 // Why a thing cannot go on a place of the module, or '' if it can.
 function placeSays(s, slot) {
   const want = placeKind(slot), is = knobKindOf(s);
+  if (want === 'none') return `PLACE ${slot} TAKES NO KNOB: ON THE E16 IT IS ${slot === 13 ? 'THE LANE WHEEL' : 'OPEN'}, AS ON EVERY PAGE.`;
   if (!is) return 'A SONG OR A STACK THAT FILLS ITSELF GOES ON NO KNOB. FREEZE IT, OR DRAG ITS CHIPS.';
-  if (is !== want) return want === 'macro' ? 'PLACES 1 TO 4 TAKE MACRO KNOBS. A STACK GOES ON 5 TO 16.' : 'PLACES 5 TO 16 TAKE STACK KNOBS. A MACRO KNOB GOES ON 1 TO 4.';
+  if (is !== want) return want === 'macro' ? 'PLACES 1 TO 4 TAKE MACRO KNOBS. A STACK GOES ON 5 TO 12, 14 OR 15.' : 'THAT PLACE TAKES A STACK KNOB. A MACRO KNOB GOES ON 1 TO 4.';
   return '';
 }
 function canDrop(d, to) {
@@ -769,7 +771,7 @@ function wire() {
     if (!b) return;
     if (b.slot) { patchStack(b, { slot: null }, `${up(b.name)} IS OFF THE MODULE. IT IS STILL IN THE COLUMN, AND IN THE RACK.`); return; }
     const n = freePlace('stack');
-    if (!n) { say('ALL TWELVE STACK KNOBS ARE TAKEN. DRAG ONE OFF THE MODULE FIRST.'); return; }
+    if (!n) { say('ALL TEN STACK KNOBS ARE TAKEN. DRAG ONE OFF THE MODULE FIRST.'); return; }
     patchStack(b, { slot: n }, `${up(b.name)} IS ON KNOB ${n}. LOAD, ON SF-000'S SNAPSHOT MODULE, BRINGS IT.`);
   });
   $('b-new').addEventListener('click', () => { const b = buildStack(); setBuild(null); say(`AN EMPTY COLUMN: THE FIRST CHIP PUT DOWN BEGINS A NEW STACK KNOB.${b ? ` ${up(b.name)} IS IN THE RACK${b.slot ? `, AND ON KNOB ${b.slot}` : ''}.` : ''}`); });
@@ -837,7 +839,7 @@ function startBench() {
       canDrop, drop, orders,
       over: (d, to) => {
         if (!d) return;
-        if (!to) { say(d.kind === 'chips' ? 'DROP IN THE COLUMN (THE STACK KNOB BEING BUILT), ON A STACK, ON ONE OF THE MODULE\'S PLACES 5 TO 16, OR ON + NEW STACK.' : 'DROP ON THE MODULE (A MACRO KNOB ON 1 TO 4, A STACK ON 5 TO 16), OR IN THE COLUMN TO BUILD IT.'); return; }
+        if (!to) { say(d.kind === 'chips' ? 'DROP IN THE COLUMN (THE STACK KNOB BEING BUILT), ON A STACK, ON ONE OF THE MODULE\'S STACK KNOBS, OR ON + NEW STACK.' : 'DROP ON THE MODULE (A MACRO KNOB ON 1 TO 4, A STACK ON 5 TO 12, 14 OR 15), OR IN THE COLUMN TO BUILD IT.'); return; }
         const s = to.type === 'pile' ? stackOf(to.key) : null, b = buildStack();
         say(to.type === 'bay' ? `ON KNOB ${to.slot}` : to.type === 'column' ? (d.kind === 'pile' ? 'INTO THE COLUMN, TO BUILD IT' : b ? `INTO ${up(b.name)}, HERE` : 'A NEW STACK KNOB') : to.type === 'table' ? (d.where === 'column' ? 'OUT OF THE STACK KNOB' : 'HERE') : to.type === 'rack' && d.where === 'column' ? 'OUT OF THE STACK KNOB' : to.type === 'tray' ? (d.where === 'column' ? 'OUT OF THE STACK KNOB' : 'ONTO THE CHASSIS') : s ? `INTO ${up(s.name)}` : to.key === 'new' ? 'A NEW STACK' : '');
       },

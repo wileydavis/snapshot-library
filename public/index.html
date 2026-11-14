@@ -19,7 +19,7 @@
     <span id="s-count" class="plate white">0</span>
     <button id="s-load" class="key" aria-pressed="false" title="Put this stack in the list under the module: LOAD brings it to SF-000's own LIBRARY screen (it is not a knob)"><i></i><span>TO SF-000</span></button>
     <label class="field small" id="s-knob-field" hidden><span>KNOB</span>
-      <select id="s-knob" aria-label="The knob of SF-000's snapshot module this goes on: 1 to 4 a macro knob, 5 to 16 a stack knob"></select>
+      <select id="s-knob" aria-label="The knob of SF-000's snapshot module this goes on: 1 to 4 a macro knob; 5 to 12, 14 or 15 a stack knob"></select>
     </label>
     <label class="field small" id="s-depth-field" hidden><span>DEPTH</span><input id="s-depth" type="number" min="0" max="100" step="1" aria-label="The macro's depth, 0 to 100"></label>
     <button id="s-keep" class="key" title="Keep this as a stack of its own"><i></i><span>KEEP</span></button>
@@ -54,7 +54,7 @@
     <div id="build" class="build" hidden>
       <div class="line"><span id="b-kind" class="plate black">STACK KNOB</span><input id="b-name" type="text" autocomplete="off" spellcheck="false" placeholder="DRAG CHIPS IN" aria-label="The name of the stack knob in the column" disabled><span id="b-count" class="plate white">0</span></div>
       <div class="line">
-        <button id="b-add" class="key" aria-pressed="false" title="Put this stack on the first free stack knob of the module (5 to 16). SF-000 takes it at LOAD" disabled><i></i><span>ADD TO MODULE</span></button>
+        <button id="b-add" class="key" aria-pressed="false" title="Put this stack on the first free stack knob of the module (5 to 12, 14, 15). SF-000 takes it at LOAD" disabled><i></i><span>ADD TO MODULE</span></button>
         <span class="grow"></span>
         <button id="b-new" class="key" title="Begin another stack knob. This one stays in the rack" disabled><i></i><span>NEW</span></button>
       </div>

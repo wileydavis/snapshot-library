@@ -19,7 +19,9 @@ the stack knob being built. On the right, the **module**: a model of SF-000's sn
 standing on the bench, with sixteen places, four by four, for its sixteen knobs.
 
 **The module is what the instrument carries for a show.** Its first four places take a **macro
-knob** (marked white, as the instrument lights one), the other twelve a **stack knob** (teal).
+knob** (marked white, as the instrument lights one); 5 to 12, 14 and 15 a **stack knob** (teal).
+Places 13 and 16 take nothing: on the E16 those two corners are the lane wheel and OPEN on every
+page, the snapshot page included, so no knob of the module is on them.
 **LOAD**, on SF-000's snapshot module, makes its sixteen knobs what the sixteen places hold: a
 knob put on a place takes that knob, one taken off comes off it. Nothing is lost by that: what a
 knob held is here already (SF-000 sends its knobs as they are made), in the rack. The library
@@ -90,7 +92,7 @@ straight way, without the glow.
 | Drag a chip into the column | into the stack knob being built, where it is put down (an empty column: a new stack knob) |
 | Drag a chip within the column; out of it | put it in order; take it out of the stack knob |
 | **ADD TO MODULE**, at the column's head | the stack knob goes on the first free stack place of the module. Again takes it off |
-| Drag a chip onto a stack place of the module (5 to 16) | a stack knob there (or one more chip in the one there) |
+| Drag a chip onto a stack place of the module (5 to 12, 14, 15) | a stack knob there (or one more chip in the one there) |
 | Drag a stack onto a stack place; a macro knob onto a macro place (1 to 4) | put it on that knob. KNOB on the bar does the same. From place to place moves it; off the module takes it off. A place refuses the other kind, and the status line says which goes where |
 | Drag a stack onto the column, or click a stack knob on the module | bring it into the column |
 | Drag up or down on a module's knob | turn it: DEPTH sets how far a macro knob goes; TURN plays each chip a stack knob comes to |
@@ -228,8 +230,8 @@ snapshot's own id.
 | `GET /api/defs?prints=a,b` | Definitions by print. |
 | `GET /api/stacks` | Every stack, in the order they stand. `?removed=1`: the removed ones. |
 | `POST /api/stacks` | `{ "id"?, "name", "kind": "stack" \| "learn" \| "song" \| "rule" (\| "macro", from before the two kinds: a stack), "items": [uid or { "u": uid, "off"?: [parts] } or, in a song, { "u": uid, "bars", "morph" }], "rule"?, "depth"?, "slot"?, "load"?, "extra"? }`. `off`: the parts of the rig that chip does not take (a lane's key, `returns`, `bus`, `master`). A `learn` is a macro knob: no items, its moves in `extra.links` as `[ { c: control id, d: share of its travel } ]`. With an `id` (8 to 24 letters and digits), making it twice is one stack. |
-| `GET /api/stacks/<id>`, `PATCH`, `DELETE` | One stack; any of those fields changed (`items` is the whole list, in order); removed (kept, and put back with `PATCH { "restore": true }`). `slot` is its place on the module, 1 to 16: 1 to 4 take a macro knob, 5 to 16 a stack of chips; the other kind is refused (400), and a song or a stack that fills itself goes on none. A place holds one thing: giving a `slot` takes it from the one that had it. |
-| `GET /api/load` | **What SF-000 takes at LOAD**: `{ "load": 2, "macro_places": 4, "knobs": [ { id, slot, kind, name, depth, uids, off?, links? } ], "stacks": [ { id, name, kind, uids, parts? } ], "chips": { "<uid>": { name, clip, tags } } }`. `knobs` is the module: a macro knob (`kind` `learn`, its `links`) on 1 to 4, a stack knob (`uids` in order; `off`, one list for each, where any chip leaves a part out) on 5 to 16. `stacks` are those marked for the instrument's library screen. |
+| `GET /api/stacks/<id>`, `PATCH`, `DELETE` | One stack; any of those fields changed (`items` is the whole list, in order); removed (kept, and put back with `PATCH { "restore": true }`). `slot` is its place on the module, 1 to 16: 1 to 4 take a macro knob; 5 to 12, 14 and 15 a stack of chips; 13 and 16 nothing. The other kind is refused (400), and a song or a stack that fills itself goes on none. A place holds one thing: giving a `slot` takes it from the one that had it. |
+| `GET /api/load` | **What SF-000 takes at LOAD**: `{ "load": 2, "macro_places": 4, "stack_places": [5, 6, 7, 8, 9, 10, 11, 12, 14, 15], "knobs": [ { id, slot, kind, name, depth, uids, off?, links? } ], "stacks": [ { id, name, kind, uids, parts? } ], "chips": { "<uid>": { name, clip, tags } } }`. `knobs` is the module: a macro knob (`kind` `learn`, its `links`) on 1 to 4, a stack knob (`uids` in order; `off`, one list for each, where any chip leaves a part out) on a stack place. `stacks` are those marked for the instrument's library screen. |
 | `GET /api/stats` | Counts. |
 
 ## Local development

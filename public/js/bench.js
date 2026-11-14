@@ -27,7 +27,8 @@ const MW = MOD.w / UNIT, MD = MOD.d / UNIT;
 const BAY_X = MW + 0.12, BAY_Z = MD + 0.2, CH = 0.42;                  // the pockets' pitch; how high its case stands on the bench
 const TRAY_W = 4 * BAY_X + 0.3;
 const COL_W = CW + 0.46, COL_HEAD = 1.5;                               // the stack knob's column, between the table and the module: a chip wide; at its head, room for its name and its keys (the page sets them there)
-const MACRO_PLACES = 4;                                                // the module's places 1 to 4 take a macro knob, 5 to 16 a stack knob
+const MACRO_PLACES = 4;                                                // the module's places 1 to 4 take a macro knob; 5 to 12, 14 and 15 a stack knob
+const E16_PLACE = { 13: 'E16 LANE', 16: 'E16 OPEN' };                     // 13 and 16 take none: on the E16 they are the lane wheel and OPEN, as on every page
 const RAIL = 0.3, RAIL_H = 0.2;                                        // the rails the rack's plate slides under
 const MINI = 0.3;                                                      // the tray's chips are a quarter the size
 const TILT = (57 * Math.PI) / 180, FOV = 26;
@@ -532,7 +533,7 @@ export class Bench {
       }, 1160, 60);
       this.badge(this.tray, tex, x0 + 0.21, z, x1 - 0.21, z + 0.4, top);
     };
-    title('SF-000 MODULE', z0 + 0.2, '1 TO 4 MACRO KNOBS   5 TO 16 STACK KNOBS');
+    title('SF-000 MODULE', z0 + 0.2, '1 TO 4 MACRO KNOBS   5 TO 15 STACK KNOBS   13, 16: THE E16\'S');
 
     const knobs = new KnobBatch({ dark: D });
     for (let i = 0; i < 16; i++) {
@@ -541,13 +542,14 @@ export class Bench {
       else {
         // an empty pocket: its number, on the floor of it
         // (a macro knob's place is marked as its knob is lit, white; a stack knob's, teal)
-        const macro = i < MACRO_PLACES;
+        const macro = i < MACRO_PLACES, corner = E16_PLACE[i + 1];
         const tex = plateTexture((g, w, h) => {
-          g.fillStyle = macro ? KNOB_LIGHT.learn : KNOB_LIGHT.stack; g.fillRect(0, h - 7, w, 7);
-          g.textBaseline = 'middle'; g.textAlign = 'center'; g.fillStyle = D ? NIGHT.dim : COL.lit; g.font = LEGEND(44);
-          g.fillText(String(i + 1), w / 2, h / 2);
-        }, 84, 60);
-        this.badge(this.tray, tex, b.x + 0.06, b.z + 0.06, b.x + 0.48, b.z + 0.36, CH, { colour: D ? NIGHT.badge : COL.black });
+          if (!corner) { g.fillStyle = macro ? KNOB_LIGHT.learn : KNOB_LIGHT.stack; g.fillRect(0, h - 7, w, 7); }
+          g.textBaseline = 'middle'; g.textAlign = 'center'; g.fillStyle = D ? NIGHT.dim : COL.lit; g.font = corner ? LEGEND(30) : LEGEND(44);
+          g.fillText(corner || String(i + 1), w / 2, h / 2);
+        }, corner ? 190 : 84, 60);
+        // (a place that takes no knob says whose it is, and has no number to drop on)
+        this.badge(this.tray, tex, b.x + 0.06, b.z + 0.06, b.x + (corner ? 1.01 : 0.48), b.z + 0.36, CH, { colour: D ? NIGHT.badge : COL.black });
       }
       this.trayHits.push({ bay: i + 1, key: bay.key || null, pile: bay, x0: b.x - 0.06, x1: b.x + BAY_X - 0.06, z0: b.z - 0.1, z1: b.z + BAY_Z - 0.1, cx: b.x + MW / 2, cz: b.z + MD / 2 });
     }
