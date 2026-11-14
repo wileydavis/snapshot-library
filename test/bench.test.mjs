@@ -252,6 +252,43 @@ part('KNOB FROM THIS makes a macro and it is given a knob; chips dropped on a kn
 }
 part('a knob is a module with its two knobs: DEPTH turned by hand is kept, TURN goes through what it holds');
 
+// 12c. a knob macro (LEARN's kind): made of what differs between two marked chips, its moves dealt as plates, one set, one taken off, and into the chassis
+{
+  await pile('all');
+  await key('unmark').catch(() => {});
+  await click(await where('whereChip', 0), { shift: true });
+  await click(await where('whereChip', 5), { shift: true });
+  assert.equal((await state()).marked.length, 2);
+  await key('m-learn');
+  await page.waitForFunction(() => window.sfLibrary.state.stacks.some((x) => x.kind === 'learn'), { timeout: 20000 });
+  await settle();
+  const lid = await S(() => window.sfLibrary.state.stacks.find((x) => x.kind === 'learn').id);
+  const movesOf = async () => (await stack(lid)).extra.links;
+  let st = await state();
+  const m0 = await movesOf();
+  assert.ok(st.open.key === `st:${lid}` && m0.length >= 3 && st.shown.length === m0.length && st.shown.every((u) => u.startsWith('move:')), `the knob macro is open and its ${m0.length} moves lie on the table as plates`);
+  assert.ok(m0.every((l, i) => i === 0 || Math.abs(m0[i - 1].d) >= Math.abs(l.d)), 'the furthest move first');
+  await click(await where('whereChip', 0));
+  assert.equal(await S(() => document.getElementById('c-amount-field').hidden), false, 'a move chosen: its AMOUNT can be set');
+  await type('c-amount', '-50');
+  const m1 = await movesOf();
+  assert.deepEqual([m1.length, m1[0].c, m1[0].d], [m0.length, m0[0].c, -0.5], 'AMOUNT sets how far the knob takes that one');
+  await click(await where('whereChip', 1));
+  await key('takeout');
+  const m2 = await movesOf();
+  assert.deepEqual(m2.map((l) => l.c), m1.filter((_, i) => i !== 1).map((l) => l.c), 'TAKE OUT takes a move off the knob');
+  await S((x) => window.sfLibrary.bench.revealPile(x), `st:${lid}`); await settle();
+  await drag(await where('wherePile', `st:${lid}`, true), await where('whereBay', 9));
+  assert.equal((await stack(lid)).slot, 9, 'dropped in a pocket of the chassis it is on that knob');
+  const k = (await get('/api/load')).knobs.find((x) => x.id === lid);
+  assert.ok(k && k.kind === 'learn' && k.uids.length === 0 && k.links.length === m2.length && k.links[0].d === -0.5, 'and LOAD is given its moves');
+  const spots = await S((x) => window.sfLibrary.bench.knobSpots.filter((q) => q.key === x && q.group === window.sfLibrary.bench.tray).map((q) => q.which).sort(), `st:${lid}`);
+  assert.deepEqual(spots, ['depth', 'turn'], 'its module in the chassis has its two knobs');
+  await key('unmark');
+  await shot('knob-macro');
+}
+part('KNOB MACRO makes a knob macro of what differs between two chips: its moves are plates, set and taken off, and LOAD is given them');
+
 // 10. a mood from examples
 await pile('mood:bright');
 for (const i of [0, 1, 2, 4]) await click(await where('whereChip', i), { shift: true });

@@ -54,7 +54,9 @@ export function seeded(count = 240) {
                      density: +density.toFixed(3), tone: +clamp(tone + (r() - 0.5) * 0.1).toFixed(3), movement: +clamp(move + (r() - 0.5) * 0.15).toFixed(3),
                      wet: +clamp(wet + (0.5 - energy) * 0.2 + (r() - 0.5) * 0.08).toFixed(3), bpm, bars: 4,
                      bands: tilt.map((v) => b255(v * (0.55 + 0.45 * energy) * (0.85 + 0.15 * r()))), pulse, lanes },
-          values: {}, patterns: real.patterns, inserts: real.inserts, gen: real.gen,
+          // (a few of the rig's knobs, moving with the sound, so that two chips differ in something: a knob macro is made of what differs)
+          values: { 'bass.cutoff': +clamp(bright).toFixed(4), 'kick.punch': +energy.toFixed(4), 'lead.cutoff': +clamp(tone).toFixed(4), 'closed_hat.decay': +density.toFixed(4), 'pad.level': +clamp(1 - energy).toFixed(4), 'chord.send_a': 0.5 },
+          patterns: real.patterns, inserts: real.inserts, gen: real.gen,
         });
       }
     }

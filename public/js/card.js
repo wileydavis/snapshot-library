@@ -61,6 +61,7 @@ export function faceCanvas(s, index, scale = 2) {
 export function paintCard(g, s, index, { selected = false, playing = false, marked = false, bare = false } = {}) {
   g.textBaseline = 'middle';
   const c = ink();
+  if (s.move) { paintMove(g, s, index, c); return; }
 
   if (!bare) {
     g.fillStyle = selected && night ? c.mark : c.frame; g.fillRect(0, 0, CARD_W, CARD_H);
@@ -133,4 +134,33 @@ export function paintCard(g, s, index, { selected = false, playing = false, mark
     const h = Math.round((Number(fill[l]) || 0) * 14);
     g.fillStyle = c.mark; g.fillRect(x + 1, y0 + 45 - h, w - 2, h);
   }
+}
+
+// One move of a knob macro, as a plate: which of the rig's knobs it turns (its lane, its name) and
+// how far the whole turn takes it: a share of that knob's travel, up (to the right) or down.
+export const moveName = (c) => String(c).replace(/[._]/g, ' ').toUpperCase();
+function paintMove(g, s, index, c) {
+  const x0 = 6, y0 = 6, d = Math.max(-1, Math.min(1, Number(s.move.d) || 0));
+  g.font = LEGEND;
+  const num = index === null || index === undefined ? '' : typeof index === 'string' ? index : String(index + 1);
+  const wTag = num ? Math.max(30, Math.ceil(g.measureText(num).width) + 10) : 0;
+  g.fillStyle = c.tag; g.fillRect(x0, y0, wTag, 24);
+  g.fillStyle = c.tagInk; g.textAlign = 'center'; g.fillText(num, x0 + wTag / 2, y0 + 13);
+  const amount = `${d >= 0 ? '+' : '\u2212'}${Math.round(Math.abs(d) * 100)}`;
+  const wRight = Math.ceil(g.measureText(amount).width) + 16;
+  g.textAlign = 'left';
+  let name = s.name;
+  const room = CARD_W - 12 - wTag - wRight - 12;
+  while (name.length > 3 && g.measureText(name).width + name.length * 0.6 > room) name = name.slice(0, -1);
+  g.fillStyle = c.pane; g.fillRect(x0 + wTag, y0, Math.ceil(g.measureText(name).width + name.length * 0.6) + 16, 24);
+  g.fillStyle = c.mark; spaced(g, name, x0 + wTag + 8, y0 + 13, 0.6);
+  g.fillStyle = c.tag; g.fillRect(CARD_W - 6 - wRight, y0, wRight, 24);
+  g.fillStyle = c.tagInk; g.textAlign = 'center'; g.fillText(amount, CARD_W - 6 - wRight / 2, y0 + 13);
+  // its travel: a slot from all the way down to all the way up, the middle marked, and how far it goes
+  const gy = y0 + 28, gh = 30, w = CARD_W - 12, mid = x0 + w / 2;
+  g.fillStyle = c.frame; g.fillRect(x0, gy, w, gh); g.fillStyle = c.pane; g.fillRect(x0 + 1, gy + 1, w - 2, gh - 2);
+  g.fillStyle = d >= 0 ? COL.amber : '#4490A1';
+  const len = Math.abs(d) * (w / 2 - 2);
+  g.fillRect(d >= 0 ? mid : mid - len, gy + 5, len, gh - 10);
+  g.fillStyle = c.mark; g.fillRect(mid - 1, gy + 2, 2, gh - 4);
 }

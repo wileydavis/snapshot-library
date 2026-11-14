@@ -3,7 +3,7 @@
 // which stack is open, what is selected, and what each press and each drop means. Everything is
 // worked out here from two lists (the snapshots, the stacks); the server is asked only to keep a change.
 import { MEASURES, unpack } from './profile.js';
-import { when as whenText, setNight } from './card.js';
+import { when as whenText, setNight, moveName } from './card.js';
 import { narrow } from './narrow.js';
 import * as rules from './stacks.js';
 import { Bench } from './bench.js';
@@ -36,7 +36,9 @@ async function api(path, options) {
 }
 const send = (path, method, body) => api(path, { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }).then((r) => r.json());
 const say = (text) => { $('status').textContent = text; };
-const chip = (uid) => state.byUid.get(uid) || null;
+// (a chip by its uid. The moves of the knob macro that is open are plates on the table too, and are found the same way.)
+const chip = (uid) => state.byUid.get(uid) || (state.moves && state.moves.get(uid)) || null;
+const linksOf = (s) => (s && s.extra && Array.isArray(s.extra.links) ? s.extra.links : []);
 const stackOf = (key) => (key && key.startsWith('st:') ? state.stacks.find((s) => s.id === key.slice(3)) || null : null);
 const newId = () => Array.from(crypto.getRandomValues(new Uint8Array(12)), (b) => 'abcdefghijklmnopqrstuvwxyz0123456789'[b % 36]).join('');
 const changed = () => { state.version++; };
@@ -49,7 +51,7 @@ function itemsOf(s) {
 }
 const allByTime = () => cached('all', () => [...state.all].sort((a, b) => rules.when(b) - rules.when(a)).map((s) => ({ u: s.uid })));
 const sittings = () => cached('sittings', () => rules.sittings(state.all));
-const KIND = { stack: '', macro: 'MACRO', song: 'SONG', rule: 'RULE' };
+const KIND = { stack: '', macro: 'MACRO', song: 'SONG', rule: 'RULE', learn: 'KNOB' };
 const sittingName = (sit) => `${whenText(sit.from)}`.replace(/\s+/g, ' ');
 
 // Every pile there is, by key: what the rack shows and what a press on one opens.
@@ -74,13 +76,14 @@ function pileList() {
 const pileOf = (key) => pileList().find((p) => p.key === key) || null;
 // What kind of knob a stack is, if it is one: a macro always (it sweeps), a stack once it is on a knob (it steps: a cue stack).
 function knobOf(s) {
-  const kind = s.kind === 'macro' ? 'macro' : s.slot && s.kind !== 'song' ? 'cue' : '';
+  const kind = s.kind === 'macro' ? 'macro' : s.kind === 'learn' ? 'learn' : s.slot && s.kind !== 'song' ? 'cue' : '';
   if (!kind) return null;
-  const n = itemsOf(s).length;
-  return { kind, slot: s.slot || 0, depth: s.depth === null || s.depth === undefined ? 1 : s.depth, count: `${n} CHIP${n === 1 ? '' : 'S'}` };
+  const n = itemsOf(s).length, m = linksOf(s).length;
+  const count = kind === 'learn' ? `${m} MOVE${m === 1 ? '' : 'S'}` : `${n} CHIP${n === 1 ? '' : 'S'}${m ? ` +${m}` : ''}`;
+  return { kind, slot: s.slot || 0, depth: s.depth === null || s.depth === undefined ? 1 : s.depth, count };
 }
 // In the tray: on one of its knobs (a macro, which sweeps, or a stack, which steps: a cue stack), or a stack marked for it.
-const inTray = (s) => !!s.slot || (s.kind !== 'macro' && !!s.load);
+const inTray = (s) => !!s.slot || (s.kind !== 'macro' && s.kind !== 'learn' && !!s.load);
 const heatsOf = (items) => items.slice(0, 4000).map((it) => { const s = chip(it.u); return s && s.p ? s.p.bright : -1; });
 
 // ---------------------------------------------------------------- drawing: the rack, the tray, the table, the strips
@@ -105,7 +108,17 @@ function showRack() {
 // The open stack's chips as they lie: FIND narrows them, ORDER orders them (AS IT IS STACKED: its own order).
 function lay() {
   const o = state.open;
+  state.moves = null;
   if (!o) { state.shown = []; return; }
+  if (o.moves) {                                    // a knob macro: its moves, in the order it has them
+    state.moves = new Map();
+    state.shown = linksOf(o.stack).map((l, i) => {
+      const uid = `move:${l.c}`, s = { uid, name: moveName(l.c), move: l, tags: [], p: null, has_clip: false };
+      state.moves.set(uid, s);
+      return { uid, s, n: 0, part: i, item: l, label: i };
+    });
+    return;
+  }
   const count = new Map();
   let list = here(o.items).map((it, i) => {
     const n = count.get(it.u) || 0; count.set(it.u, n + 1);
@@ -138,6 +151,7 @@ function describe(p) {
     key: p.key, name: p.name, items: p.items, stack: s, rule: p.rule || (s && s.rule) || null,
     kind: s ? s.kind : p.key.split(':')[0],
     editable: !!s && s.kind !== 'rule',                       // chips can be put in, taken out and put in order
+    moves: !!s && s.kind === 'learn',                         // (a knob macro: what lies on the table is its moves)
   };
 }
 function openPile(key, { quiet = false } = {}) {
@@ -151,7 +165,8 @@ function openPile(key, { quiet = false } = {}) {
   if ($('order').value === 'like') $('order').value = 'own';
   refresh({ from: key });
   bench.revealPile(key);
-  if (!quiet) say(`${up(p.name)}: ${p.items.length} CHIP${p.items.length === 1 ? '' : 'S'}.`);
+  const mv = p.stack && p.stack.kind === 'learn' ? linksOf(p.stack).length : -1;
+  if (!quiet) say(mv >= 0 ? `${up(p.name)}: A KNOB MACRO OF ${mv} MOVE${mv === 1 ? '' : 'S'}. CLICK ONE TO SET HOW FAR ITS KNOB GOES; TAKE OUT TAKES IT OFF.` : `${up(p.name)}: ${p.items.length} CHIP${p.items.length === 1 ? '' : 'S'}.`);
 }
 // A stack worked out and not kept yet: it is dealt, and KEEP makes it a stack.
 function openTemp(name, kind, items, rule) {
@@ -171,12 +186,12 @@ function reopen({ keepScroll = true } = {}) {
 // ---------------------------------------------------------------- the bar: the open stack
 function showBar() {
   const o = state.open, s = o && o.stack;
-  const kinds = { all: 'LIBRARY', unsorted: 'LIBRARY', recent: 'LIBRARY', mood: 'MOOD', sit: 'SITTING', auto: 'SORTED', stack: 'STACK', macro: 'MACRO', song: 'SONG', rule: 'RULE' };
+  const kinds = { all: 'LIBRARY', unsorted: 'LIBRARY', recent: 'LIBRARY', mood: 'MOOD', sit: 'SITTING', auto: 'SORTED', stack: 'STACK', macro: 'MACRO', song: 'SONG', rule: 'RULE', learn: 'KNOB MACRO' };
   $('s-kind').textContent = o ? (o.temp ? 'NEW' : kinds[o.kind] || 'STACK') : 'STACK';
   const name = $('s-name');
   if (document.activeElement !== name) name.value = o ? up(o.name) : '';
   name.disabled = !o || !(s || o.temp);
-  const n = state.shown.length, of = o ? here(o.items).length : 0;
+  const n = state.shown.length, of = o ? (o.moves ? linksOf(o.stack).length : here(o.items).length) : 0;
   $('s-count').textContent = n === of ? String(of) : `${n} OF ${of}`;
   const load = $('s-load');
   load.hidden = !!(s && s.kind === 'macro');
@@ -184,9 +199,9 @@ function showBar() {
   load.setAttribute('aria-pressed', String(!!s && inTray(s)));
   const macro = (s && s.kind === 'macro') || (o && o.temp && o.kind === 'macro');
   // (a knob holds a macro or a stack: a stack on a knob is a cue stack. DEPTH is a macro's.)
-  $('s-knob-field').hidden = !(s && s.kind !== 'song'); $('s-depth-field').hidden = !(s && s.kind === 'macro');
+  $('s-knob-field').hidden = !(s && s.kind !== 'song'); $('s-depth-field').hidden = !(s && (s.kind === 'macro' || s.kind === 'learn'));
   if (s && s.kind !== 'song') $('s-knob').value = String(s.slot || 0);
-  if (s && s.kind === 'macro') {
+  if (s && (s.kind === 'macro' || s.kind === 'learn')) {
     if (document.activeElement !== $('s-depth')) $('s-depth').value = s.depth === null || s.depth === undefined ? '' : String(Math.round(s.depth * 100));
   }
   // KEEP: what is out and not a stack of its own becomes one. FREEZE: a stack that fills itself stops.
@@ -268,6 +283,8 @@ async function syncRules() {
 
 // ---------------------------------------------------------------- hearing
 function press(uid, n = 0) {
+  const s = chip(uid);
+  if (s && s.move) { select(uid, n); say(`${s.name}: THE KNOB'S WHOLE TURN TAKES IT ${s.move.d >= 0 ? 'UP' : 'DOWN'} ${Math.round(Math.abs(s.move.d) * 100)} OF ITS TRAVEL. SET IT IN AMOUNT.`); return; }
   if (uid === state.selected && uid === state.playing) { stop(); return; }
   select(uid, n);
   play(uid);
@@ -282,6 +299,7 @@ function select(uid, n = 0) {
 }
 function play(uid) {
   const s = chip(uid);
+  if (s && s.move) return;                          // (a move has no sound of its own)
   if (!s || !s.has_clip) { stop(); if (s) say('NO SOUND WAS KEPT WITH THIS ONE: IT WAS TAKEN WITH THE CLOCK STOPPED, OR ITS CLIP HAS NOT ARRIVED.'); return; }
   state.playing = uid;
   audio.src = `/api/clips/${encodeURIComponent(uid)}`;
@@ -290,6 +308,23 @@ function play(uid) {
   say(`PLAYING ${up(s.name)}. CLICK IT AGAIN, OR PRESS SPACE, TO STOP.`);
 }
 function stop() { state.playing = null; audio.pause(); marks(); showChip(); }
+// A knob macro from two marked chips: every knob of the rig that stands differently in the second than in the first, each
+// turned by as much as it differs. On a knob of SF-000 it makes that change from wherever the rig is (it is LEARN's kind of
+// knob: it holds moves, not snapshots).
+async function knobMacro() {
+  const [a, b] = markedInOrder();
+  if (!a || !b) return;
+  try {
+    const [sa, sb] = await Promise.all([a, b].map(async (u) => (await (await fetch(`/api/snapshots/${encodeURIComponent(u)}`)).json()).snapshot || {}));
+    const va = sa.values || {}, vb = sb.values || {};
+    const links = Object.keys(vb).filter((c) => Number.isFinite(va[c]) && Number.isFinite(vb[c]) && Math.abs(vb[c] - va[c]) >= 0.005)
+      .map((c) => ({ c, d: Math.round((vb[c] - va[c]) * 1000) / 1000 })).sort((x, y) => Math.abs(y.d) - Math.abs(x.d)).slice(0, 64);
+    if (!links.length) { say(`${up(chip(a).name)} AND ${up(chip(b).name)} HAVE EVERY KNOB IN THE SAME PLACE: THERE IS NOTHING FOR A KNOB MACRO TO MOVE.`); return; }
+    makeStack({ name: `${up(chip(a).name)} TO ${up(chip(b).name)}`.slice(0, 40), kind: 'learn', items: [], depth: 1, extra: { links, from: [a, b] } },
+      `A KNOB MACRO OF ${links.length} MOVE${links.length === 1 ? '' : 'S'}: WHAT DIFFERS FROM ${up(chip(a).name)} TO ${up(chip(b).name)}. DROP IT IN A POCKET OF THE CHASSIS.`);
+  } catch { say('THE TWO SNAPSHOTS COULD NOT BE READ. NOTHING WAS MADE.'); }
+}
+
 // A hand on a module's knob. DEPTH: how far the macro goes (kept when the hand lets go). TURN: through what the knob
 // holds, as the instrument's would go: each chip it comes to is heard, as a turn of a stack's knob cues it there.
 function turned(key, which, v, done, moved) {
@@ -302,6 +337,7 @@ function turned(key, which, v, done, moved) {
     return;
   }
   const items = itemsOf(s);
+  if (!done && s.kind === 'learn') { say(`${up(s.name)}: ITS TURN MOVES ${linksOf(s).length} OF THE RIG'S KNOBS. THERE IS NOTHING OF IT TO HEAR HERE.`); return; }
   if (done || !items.length) return;
   const i = Math.min(items.length - 1, Math.round(v * (items.length - 1))), uid = items[i].u, c = chip(uid);
   if (state.playing !== uid && state.turnedTo !== uid) {
@@ -323,7 +359,10 @@ function step(by) {
 // ---------------------------------------------------------------- the chip's strip
 function showChip() {
   const s = chip(state.selected), o = state.open;
-  for (const id of ['c-name', 'c-tags', 'c-notes']) $(id).disabled = !s;
+  const mv = s && s.move ? s : null;
+  $('c-amount-field').hidden = !mv;
+  if (mv && document.activeElement !== $('c-amount')) $('c-amount').value = String(Math.round(mv.move.d * 100));
+  for (const id of ['c-name', 'c-tags', 'c-notes']) $(id).disabled = !s || !!mv;
   if (document.activeElement !== $('c-name')) $('c-name').value = s ? up(s.name || 'UNNAMED') : '';
   if (document.activeElement !== $('c-tags')) $('c-tags').value = s ? (s.tags || []).join(', ') : '';
   if (document.activeElement !== $('c-notes')) $('c-notes').value = s ? s.notes || '' : '';
@@ -341,11 +380,11 @@ function showChip() {
   }
   $('play').disabled = !s || !s.has_clip;
   $('play').setAttribute('aria-pressed', String(!!s && state.playing === s.uid));
-  $('mark').disabled = !s;
+  $('mark').disabled = !s || !!mv;
   $('mark').setAttribute('aria-pressed', String(!!s && state.marked.has(s.uid)));
   for (const id of ['like', 'song', 'knob']) $(id).disabled = !s || !s.p;
-  $('takeout').disabled = !s || !o || !o.editable || !o.items.some((it) => it.u === s.uid);
-  $('delete').disabled = !s;
+  $('takeout').disabled = !s || !o || !o.editable || !(mv || o.items.some((it) => it.u === s.uid));
+  $('delete').disabled = !s || !!mv;
   $('delete').setAttribute('aria-pressed', String(state.armed === 'chip'));
 }
 
@@ -380,6 +419,13 @@ function savePart() {
 function takeOut(uids) {
   const o = state.open;
   if (!o || !o.editable || !uids.length) return;
+  if (o.moves) {                                    // a knob macro: the move comes off it
+    const gone = new Set(uids.map((u) => String(u).replace(/^move:/, '')));
+    const links = linksOf(o.stack).filter((l) => !gone.has(l.c));
+    if (gone.has(String(state.selected).replace(/^move:/, ''))) state.selected = null;
+    patchStack(o.stack, { extra: { ...(o.stack.extra || {}), links } }, `TAKEN OFF ${up(o.stack.name)}. IT HAS ${links.length} MOVE${links.length === 1 ? '' : 'S'}.`);
+    return;
+  }
   const gone = new Set(uids);
   const items = o.stack.items.filter((it) => !gone.has(it.u));
   if (gone.has(state.selected)) state.selected = null;
@@ -422,6 +468,7 @@ function fromChip(type) {
 
 // ---------------------------------------------------------------- the marked chips
 function toggleMark(uid) {
+  if (String(uid).startsWith('move:')) return;                // (a move is not a chip: it is not marked)
   if (state.marked.has(uid)) state.marked.delete(uid); else state.marked.add(uid);
   marks(); showChip(); showFoot();
 }
@@ -435,6 +482,7 @@ function showFoot() {
   $('count').textContent = n ? `${n} MARKED` : `${total} SNAPSHOT${total === 1 ? '' : 'S'}`;
   for (const id of ['m-stack', 'unmark', 'm-tag']) $(id).disabled = !n;
   $('m-macro').disabled = n < 2;
+  $('m-learn').disabled = n !== 2;
   $('m-mood').disabled = [...state.marked].filter((u) => chip(u) && chip(u).p).length < 2;
   $('export').disabled = !state.shown.length && !n;
   $('autosort').setAttribute('aria-pressed', String(!!state.sorted));
@@ -495,15 +543,16 @@ function addTo(s, uids, at = -1) {
 function canDrop(d, to) {
   if (!to) return false;
   if (d.kind === 'chips') {
+    if (d.uids.some((u) => String(u).startsWith('move:'))) return false;          // (a knob macro's moves stay on it)
     if (to.type === 'table') return orders();
-    if (to.type === 'bay') return true;
-    if (to.type === 'pile') { const s = stackOf(to.key); return to.key === 'new' || (!!s && s.kind !== 'rule' && to.key !== (state.open && state.open.key)); }
+    if (to.type === 'bay') { const on = stackOf(to.key); return !(on && on.kind === 'learn'); }     // (chips do not go into a knob macro)
+    if (to.type === 'pile') { const s = stackOf(to.key); return to.key === 'new' || (!!s && s.kind !== 'rule' && s.kind !== 'learn' && to.key !== (state.open && state.open.key)); }
     return false;
   }
   // a whole pile: into the tray, onto a knob, or (from the tray) out of it
   const s = stackOf(d.key), mood = d.key.startsWith('mood:');
   if (to.type === 'bay') return !!s && s.kind !== 'song';              // (a macro, or a stack: on a knob it is a cue stack)
-  if (to.type === 'tray' || (to.type === 'pile' && to.inTray)) return (!!s && s.kind !== 'macro') || mood;
+  if (to.type === 'tray' || (to.type === 'pile' && to.inTray)) return (!!s && s.kind !== 'macro' && s.kind !== 'learn') || mood;
   return !!s && inTray(s);                                    // dropped anywhere else: out of the tray
 }
 function drop(d, to) {
@@ -580,6 +629,14 @@ function wire() {
 
   $('m-stack').addEventListener('click', () => makeStack({ name: 'NEW STACK', items: markedInOrder() }, `A STACK OF THE ${state.marked.size} MARKED. NAME IT ABOVE.`));
   $('m-macro').addEventListener('click', () => makeStack({ name: 'NEW MACRO', kind: 'macro', items: markedInOrder(), depth: 1 }, 'A MACRO OF THE MARKED, IN THE ORDER THEY LAY. GIVE IT A KNOB ABOVE.'));
+  $('m-learn').addEventListener('click', knobMacro);
+  $('c-amount').addEventListener('change', () => {
+    const o = state.open, s = chip(state.selected);
+    if (!o || !o.moves || !s || !s.move) return;
+    const d = Math.max(-100, Math.min(100, Math.round(Number($('c-amount').value) || 0))) / 100;
+    const links = linksOf(o.stack).map((l) => (l.c === s.move.c ? { c: l.c, d } : l));
+    patchStack(o.stack, { extra: { ...(o.stack.extra || {}), links } }, `${s.name}: ${d >= 0 ? '+' : '-'}${Math.round(Math.abs(d) * 100)}`);
+  });
   $('m-mood').addEventListener('click', moodFromMarked);
   $('m-tag').addEventListener('change', tagMarked);
   $('export').addEventListener('click', exportChips);

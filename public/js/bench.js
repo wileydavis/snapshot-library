@@ -35,7 +35,7 @@ const TEAL = '#4490A1';                                                // a swee
 const KNOB_LIGHT = { macro: TEAL, cue: '#C5843F', learn: '#E9E6E2' };  // (a stack's knob steps: amber)
 const KNOB_KIND = { macro: 'MACRO', cue: 'CUE STACK', learn: 'KNOB MACRO' };
 const EDGE_NONE = '#9A9B96';                                           // a chip with no sound kept
-const edgeColour = (s) => (s && s.p ? heat(s.p.bright) : EDGE_NONE);
+const edgeColour = (s) => (s && s.move ? (s.move.d >= 0 ? COL.amber : TEAL) : s && s.p ? heat(s.p.bright) : EDGE_NONE);      // (a knob macro's move: up or down)
 const clamp = (x, lo, hi) => Math.min(hi, Math.max(lo, x));
 
 // Print: a picture that keeps how much of the surface it covers (clear where nothing is printed).
@@ -577,7 +577,7 @@ export class Bench {
   // ---------------------------------------------------------------- chips' faces
   face(s, label) {
     const key = s.uid, had = this.faces.get(key);
-    const stamp = `${label}|${s.name}`;
+    const stamp = `${label}|${s.name}|${s.move ? s.move.d : ''}`;
     if (had && had.stamp === stamp) { had.used = ++this.frame; return had.tex; }
     if (had) had.tex.dispose();
     const tex = printOf(faceCanvas(s, label, this.faceScale || 2));

@@ -206,6 +206,18 @@ assert.ok(!tray.stacks.some((x) => x.id === 'teststack001'));
 stack = await (await j('/api/stacks/teststack001', 'PATCH', { restore: true })).json();
 assert.deepEqual([stack.name, stack.items.map((x) => x.u), stack.load], ['DEEP ROLLERS', [u[2], u[0], u[3]], false], 'put back: its name and chips as they were, out of the tray');
 
+// a knob macro (LEARN's kind): no chips, its moves; on a knob, LOAD is given them. What is not a move is left out.
+let learn = await (await j('/api/stacks', 'POST', { id: 'testlearn001', name: 'OPEN UP', kind: 'learn', depth: 0.8, slot: 9,
+  extra: { links: [{ c: 'bass.cutoff', d: 0.4 }, { c: 'lead.cutoff', d: -0.25 }, { c: '', d: 1 }, { c: 'kick.punch', d: 'much' }, { c: 'pad.level', d: 7 }] } })).json();
+assert.deepEqual([learn.kind, learn.items, learn.slot, learn.depth], ['learn', [], 9, 0.8]);
+tray = await (await j('/api/load')).json();
+const lk = tray.knobs.find((k) => k.id === 'testlearn001');
+assert.deepEqual(lk, { id: 'testlearn001', slot: 9, kind: 'learn', name: 'OPEN UP', depth: 0.8, uids: [], links: [{ c: 'bass.cutoff', d: 0.4 }, { c: 'lead.cutoff', d: -0.25 }, { c: 'pad.level', d: 1 }] }, 'a knob macro on a knob: its moves, well formed and within a whole turn');
+assert.ok(!tray.stacks.some((x) => x.id === 'testlearn001'), 'a knob macro is a knob\'s and not a stack');
+learn = await (await j('/api/stacks/testlearn001', 'PATCH', { slot: null })).json();
+assert.ok(!(await (await j('/api/load')).json()).knobs.some((k) => k.id === 'testlearn001'), 'off its knob, it is not loaded');
+if (!process.env.SEED) await j('/api/stacks/testlearn001?forget=1', 'DELETE');
+
 const st = await (await j('/api/stats')).json();
 assert.ok(st.snapshots >= many.length + 2 && st.clips >= 1 && st.defs >= 30 && st.libraries >= 2);
 assert.ok(st.stacks >= 5 && st.in_tray >= 1);

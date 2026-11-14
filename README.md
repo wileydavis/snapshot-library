@@ -25,6 +25,14 @@ amber if it steps. Its knobs turn under the hand (drag up for more): DEPTH is ho
 goes, and is kept; TURN goes through the chips the knob holds and plays each one it comes to,
 as a turn of the instrument's knob would bring it.
 
+The third kind of knob is a **knob macro** (LEARN's kind on the instrument): it holds no chips
+but **moves**, each one of the rig's own knobs and how far the whole turn takes it. Mark two
+chips and press KNOB MACRO: it is made of every knob that stands differently in the second than
+in the first, each turned by as much as it differs. On SF-000 it makes that change from wherever
+the rig is. Open it and its moves lie on the table as plates (amber: up; teal: down): click one
+to set its AMOUNT (-100 to 100, a share of that knob's travel), TAKE OUT to take it off. Its
+module has no pile under it; dropped in a pocket of the chassis, LOAD ties that knob to them.
+
 A chip is one of the instrument's plates: the snapshot's card printed on black anodizing that
 has been used, every chip with scratches of its own. Its edge is its colour (deep red for a dark
 sound, through amber and yellow, to white), so the side of a pile shows what is in it.
@@ -63,9 +71,10 @@ seven measures, and what can be made from it. The foot is for the marked.
   that is out. REMOVE STACK, pressed twice, takes a stack away and leaves its chips.
 - **A macro** is made on purpose: the chips a snapshot knob sweeps through, in the order they
   lie, with a DEPTH. MACRO makes one of the marked chips, KNOB FROM THIS one from a chip's
-  family. Give it a knob on the bar, or drag it to a bay. Its bay's number is on teal.
-- **A cue stack** is any stack on a knob (its bay's number is on amber): a curated list the knob
+  family. Give it a knob on the bar, or drag it to a pocket of the chassis. Its number is on teal.
+- **A cue stack** is any stack on a knob (its number is on amber): a curated list the knob
   steps through. It is among the instrument's stacks as well.
+- **A knob macro** holds moves, not chips: KNOB MACRO makes one of two marked chips.
 - **A song** is parts in a line: each a chip, how many BARS it lasts and how long the WAY IN takes.
   On the chassis it loads as an arrangement.
 - **Moods** (DEEP, DUB, DRIVING, HYPNOTIC, PEAK, SPARSE, DARK, BRIGHT, HEAVY, RESTLESS, WARM-UP)
@@ -175,7 +184,7 @@ snapshot's own id.
 | `GET /api/stacks` | Every stack, in the order they stand. `?removed=1`: the removed ones. |
 | `POST /api/stacks` | `{ "id"?, "name", "kind": "stack" \| "macro" \| "song" \| "rule", "items": [uid or { "u": uid, "bars", "morph" }], "rule"?, "depth"?, "slot"?, "load"? }`. With an `id` (8 to 24 letters and digits), making it twice is one stack. |
 | `GET /api/stacks/<id>`, `PATCH`, `DELETE` | One stack; any of those fields changed (`items` is the whole list, in order); removed (kept, and put back with `PATCH { "restore": true }`). A knob holds one macro: giving a macro a `slot` takes it from the one that had it. |
-| `GET /api/load` | **What SF-000 takes at LOAD**: `{ "stacks": [ { id, name, kind, uids, parts? } ], "knobs": [ { id, slot, kind, name, depth, uids } ], "chips": { "<uid>": { name, clip, tags } } }`. The stacks in the tray and what is on each knob (`kind` "macro": the knob sweeps; "stack": it steps, a cue stack, and is among the stacks too), each with the chips it holds now (a stack that fills itself: what it held when the page last looked). |
+| `GET /api/load` | **What SF-000 takes at LOAD**: `{ "stacks": [ { id, name, kind, uids, parts? } ], "knobs": [ { id, slot, kind, name, depth, uids, links? } ] (kind: `macro`, `stack` or `learn`; a knob macro's and a macro's `links` are `[ { c: control id, d: share of its travel } ]`), "chips": { "<uid>": { name, clip, tags } } }`. The stacks in the tray and what is on each knob (`kind` "macro": the knob sweeps; "stack": it steps, a cue stack, and is among the stacks too), each with the chips it holds now (a stack that fills itself: what it held when the page last looked). |
 | `GET /api/stats` | Counts. |
 
 ## Local development

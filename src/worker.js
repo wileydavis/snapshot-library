@@ -10,7 +10,12 @@ const MAX_LIST = 5000;
 const UID = /^[0-9a-f]{16}-[0-9A-Za-z_.-]{1,64}$/;
 const PRINT = /^[0-9a-f]{16}$/;
 const STACK_ID = /^[0-9a-z]{8,24}$/;
-const STACK_KINDS = ['stack', 'macro', 'song', 'rule'];
+// (learn: a knob macro, LEARN's kind in SF-000: no chips, its moves in extra.links as [{ c: control id, d: share of its travel }])
+const STACK_KINDS = ['stack', 'macro', 'song', 'rule', 'learn'];
+// A knob's moves, as SF-000 writes a knob's links: only what is well formed, 64 at most.
+const linksOf = (s) => (s.extra && Array.isArray(s.extra.links) ? s.extra.links : [])
+  .filter((l) => l && typeof l.c === 'string' && l.c.length > 0 && l.c.length <= 80 && Number.isFinite(Number(l.d)))
+  .slice(0, 64).map((l) => ({ c: l.c, d: Math.max(-1, Math.min(1, Number(l.d))) }));
 const MAX_ITEMS = 5000;                 // chips in one stack
 // A snapshot from before it said which lanes it had: SF-000's eleven, in its order.
 const FIRST_LANES = ['kick', 'closed_hat', 'open_hat', 'clap', 'perc', 'bass', 'rumble', 'lead', 'chord', 'pad', 'voice'];
@@ -510,8 +515,14 @@ async function load(env) {
   const out = { load: 1, at: Date.now(), stacks: [], knobs: [], chips };
   for (const s of all) {
     const items = here(s);
-    if (s.slot && items.length) out.knobs.push({ id: s.id, slot: s.slot, kind: s.kind === 'macro' ? 'macro' : 'stack', name: s.name, depth: s.kind === 'macro' ? s.depth : null, uids: items.map((it) => it.u) });
-    if (s.kind === 'macro') continue;                                  // (a macro is a knob's and nothing else; a stack on a knob is among the stacks too)
+    // (a knob macro has no chips: its moves. A macro may have moves too. An SF-000 from before knob macros reads one as a stack of none, and leaves it.)
+    const links = s.kind === 'macro' || s.kind === 'learn' ? linksOf(s) : [];
+    if (s.slot && (items.length || links.length)) {
+      const k = { id: s.id, slot: s.slot, kind: s.kind === 'macro' ? 'macro' : s.kind === 'learn' ? 'learn' : 'stack', name: s.name, depth: s.kind === 'macro' || s.kind === 'learn' ? s.depth : null, uids: s.kind === 'learn' ? [] : items.map((it) => it.u) };
+      if (links.length) k.links = links;
+      out.knobs.push(k);
+    }
+    if (s.kind === 'macro' || s.kind === 'learn') continue;            // (a macro is a knob's and nothing else; a stack on a knob is among the stacks too)
     const st = { id: s.id, name: s.name, kind: s.kind === 'song' ? 'song' : 'stack', uids: items.map((it) => it.u) };
     if (s.kind === 'song') st.parts = items.map((it) => ({ uid: it.u, bars: it.bars || 8, morph: it.morph || 0 }));
     out.stacks.push(st);

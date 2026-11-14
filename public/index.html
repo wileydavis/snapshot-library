@@ -59,6 +59,7 @@
     <label class="field tags"><span>TAGS</span><input id="c-tags" type="text" autocomplete="off" spellcheck="false" placeholder="COMMA BETWEEN EACH" disabled></label>
     <label class="field notes"><span>NOTES</span><input id="c-notes" type="text" autocomplete="off" spellcheck="false" disabled></label>
     <label class="field small part" id="c-bars-field" hidden><span>BARS</span><input id="c-bars" type="number" min="1" max="256" step="1"></label>
+    <label class="field small part" id="c-amount-field" hidden><span>AMOUNT</span><input id="c-amount" type="number" min="-100" max="100" step="1" aria-label="How far the knob's whole turn takes this one, as a share of its travel: -100 to 100"></label>
     <label class="field small part" id="c-morph-field" hidden><span>WAY IN</span><input id="c-morph" type="number" min="0" max="256" step="0.25"></label>
     <div id="c-measures" class="meters" aria-hidden="true"></div>
     <span class="small" id="c-when"></span>
@@ -76,6 +77,7 @@
     <span id="count" class="plate white">0 SNAPSHOTS</span>
     <button id="m-stack" class="key" title="A new stack of the marked chips"><i></i><span>STACK THEM</span></button>
     <button id="m-macro" class="key" title="A macro of the marked chips, in the order they lie"><i></i><span>MACRO</span></button>
+    <button id="m-learn" class="key" title="A knob macro of two marked chips: every knob of the rig that differs between them, turned from the first's place to the second's"><i></i><span>KNOB MACRO</span></button>
     <button id="m-mood" class="key" title="A mood worked out from what the marked chips share: a stack of everything that fits it"><i></i><span>MOOD FROM THEM</span></button>
     <label class="field small tagfield"><span>TAG</span><input id="m-tag" type="text" autocomplete="off" spellcheck="false" placeholder="+ADD  -TAKE OFF" aria-label="Tags to put on the marked chips, or with a minus to take off"></label>
     <button id="export" class="key"><i></i><span>EXPORT</span></button>
