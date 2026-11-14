@@ -101,7 +101,7 @@ function showRack() {
     const s = state.stacks.find((x) => x.slot === i + 1);
     return s ? { key: `st:${s.id}`, name: s.name, sweeps: s.kind === 'macro', knob: knobOf(s), heats: heatsOf(itemsOf(s)), open: !!state.open && state.open.key === `st:${s.id}` } : { key: null, name: '' };
   });
-  const loaded = state.stacks.filter((s) => s.kind !== 'macro' && inTray(s)).map((s) => ({ key: `st:${s.id}`, name: s.name || 'UNNAMED', count: itemsOf(s).length, heats: heatsOf(itemsOf(s)), open: !!state.open && state.open.key === `st:${s.id}` }));
+  const loaded = state.stacks.filter((s) => s.kind !== 'macro' && s.kind !== 'learn' && inTray(s)).map((s) => ({ key: `st:${s.id}`, name: s.name || 'UNNAMED', count: itemsOf(s).length, heats: heatsOf(itemsOf(s)), open: !!state.open && state.open.key === `st:${s.id}` }));
   bench.setTray({ bays, stacks: loaded });
 }
 
