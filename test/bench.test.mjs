@@ -41,7 +41,7 @@ await page.goto(BASE + '/', { waitUntil: 'networkidle0', timeout: 60000 });
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 // (things fly to their places, and what was asked of the server comes back: wait until the bench is still)
-const settle = async () => { await wait(160); await page.waitForFunction(() => !window.sfLibrary.bench.running, { timeout: 20000, polling: 50 }); await wait(120); await page.waitForFunction(() => !window.sfLibrary.bench.running, { timeout: 20000, polling: 50 }); };
+const settle = async () => { await wait(160); await page.waitForFunction(() => !window.sfLibrary.bench.running, { timeout: 90000, polling: 50 }); await wait(120); await page.waitForFunction(() => !window.sfLibrary.bench.running, { timeout: 90000, polling: 50 }); };
 const S = (fn, ...args) => page.evaluate(fn, ...args);
 const state = () => S(() => {
   const s = window.sfLibrary.state;

@@ -10,19 +10,27 @@ it, worked out by SF-000, and that is what the stacks that fill themselves go by
 
 ## The bench
 
-A bench in the instrument's materials, in 3D. At the back, the **rack**: pockets cut into the
-body, a stack in each, its name on a plate. In front, the **table**: the open stack dealt out
-face up. On the right, the **tray**: sixteen knob bays and a row of pockets, standing for SF-000.
+A bench made as SF-000 is made, in 3D: a powder-coated case in a dark room, with a warm glow
+under it. At the back, the **rack**: a faceplate with a cut-out for every stack, the stack
+standing in it as a pile of chips, its name on a small display in front. In front, on the case
+itself, the **table**: the open stack dealt out face up. On the right, the **tray**: sixteen
+knob bays and a row of pockets, standing for SF-000.
 
-A chip's face is the card the instrument draws. Its edge is its colour (deep red for a dark
+A chip is one of the instrument's plates: the snapshot's card printed on black anodizing that
+has been used, every chip with scratches of its own. Its edge is its colour (deep red for a dark
 sound, through amber and yellow, to white), so the side of a pile shows what is in it.
+
+The finishes, the light, the room and the glow round what is lit are the instrument's own
+(`public/js/look.js` is its 3D stage's drawing, carried over; `public/wear.png` is its scratch
+sheet). If a browser draws the bench wrong or slowly, `?plain` after the address draws it the
+straight way, without the glow.
 
 | DO THIS | TO |
 | --- | --- |
 | Click a stack | deal it out on the table |
 | Click a chip | choose it and hear its four bars, looped. Again, or space, stops. Arrows move along the chips |
 | Shift-click a chip, or **M** | mark it. What is done to a marked chip is done to all the marked |
-| Drag a chip onto a stack's pocket | put it in that stack (it stays where it was too: a chip can be in any number of stacks) |
+| Drag a chip onto a stack | put it in that stack (it stays where it was too: a chip can be in any number of stacks) |
 | Drag a chip onto **+ NEW STACK** | a new stack of it |
 | Drag a chip along the table | put the open stack in order (a stack of your own, with ORDER on AS IT IS STACKED) |
 | **Backspace**, or TAKE OUT | take the chosen chip out of the open stack. It stays in the library |
@@ -185,6 +193,8 @@ src/schema.js          the D1 tables, and the columns added since (the Worker ad
 public/index.html      the bench
 public/js/main.js      what there is and what each press and drop means: chips, stacks, the open stack
 public/js/bench.js     the bench drawn and handled: the rack, the table, the tray, picking up and putting down
+public/js/look.js      the instrument's look: its finishes, light, room, glow and shapes (plates, keys' and knobs' parts)
+public/wear.png        the instrument's scratch sheet (SF-000's assets/wear.png, made by its tools/wear.py)
 public/js/stacks.js    the stacks that fill themselves: like, family, song, knob, moods, sittings, auto sort
 public/js/card.js      a snapshot's card, drawn as SF-000 draws it, light or dark
 public/js/profile.js   the profile's measures and the likeness sum, as SF-000 has them

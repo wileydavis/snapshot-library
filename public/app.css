@@ -151,3 +151,50 @@ body.night .map button.none { color: #5A605D; }
 .rows .key i { width: 18px; height: 18px; }
 .rows .plate { font-size: 13px; padding: 2px 7px; }
 .rows[hidden] { display: none; }
+
+/* ---------------------------------------------------------------- the bench's own frame, made as the instrument is made
+   The bars round the bench are parts too: the top one the case (powder coat), the two under it
+   faceplates; keys are caps that stand in their holes, go down under a finger (in 45 ms, as the
+   instrument's do) and come back on their spring (70 ms); what shows a name or a number is a
+   display, glass over light. The dark look's plates are worn: the instrument's own scratch sheet. */
+body.bench .bar, body.bench .strip { position: relative; isolation: isolate; }
+body.bench .bar::before, body.bench .strip::before { content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none; border-radius: inherit;
+  background: url("wear.png") 0 0 / 1500px auto; mix-blend-mode: screen; opacity: 0; }
+body.bench .strip.chip::before { background-position: -340px -210px; }
+body.bench .strip.foot::before { background-position: -910px -520px; }
+body.bench .bar { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), inset 0 -2px 3px rgba(0, 0, 0, 0.18); }
+body.bench .strip { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.30), inset 1px 0 0 rgba(255, 255, 255, 0.12), inset 0 -1px 0 rgba(0, 0, 0, 0.25); }
+
+body.bench .key i { border: 0; border-radius: 3px; background: linear-gradient(165deg, #F4F2EE, #DCD8D2);
+  box-shadow: 0 0 0 1.5px var(--black), inset 0 1px 0 rgba(255, 255, 255, 0.7), inset 0 -2px 0 rgba(0, 0, 0, 0.12), 2px 3px 3px rgba(0, 0, 0, 0.35);
+  transition: transform 70ms ease-out, box-shadow 70ms ease-out; }
+body.bench .key:not(:disabled):active i { transform: translate(0.5px, 1.5px); transition-duration: 45ms;
+  box-shadow: 0 0 0 1.5px var(--black), inset 0 1px 0 rgba(255, 255, 255, 0.4), 0.5px 1px 1px rgba(0, 0, 0, 0.35); }
+body.bench .key[aria-pressed="true"] i { transform: translate(0.3px, 0.8px); background: linear-gradient(165deg, #EBD968, var(--yellow));
+  box-shadow: 0 0 0 1.5px var(--black), inset 0 1px 0 rgba(255, 255, 255, 0.55), 1px 1.5px 2px rgba(0, 0, 0, 0.35), 0 0 10px rgba(235, 217, 104, 0.55); }
+body.bench #play[aria-pressed="true"] i { background: linear-gradient(165deg, #5FCB66, #46A84D); box-shadow: 0 0 0 1.5px var(--black), inset 0 1px 0 rgba(255, 255, 255, 0.5), 1px 1.5px 2px rgba(0, 0, 0, 0.35), 0 0 12px rgba(95, 203, 102, 0.6); }
+body.bench .key.danger[aria-pressed="true"] i { background: linear-gradient(165deg, #D65557, var(--red)); box-shadow: 0 0 0 1.5px var(--black), inset 0 1px 0 rgba(255, 255, 255, 0.4), 1px 1.5px 2px rgba(0, 0, 0, 0.35), 0 0 12px rgba(214, 85, 87, 0.6); }
+
+body.bench .field { border: 0; border-radius: 2px; box-shadow: 0 0 0 1px var(--black), inset 0 2px 3px rgba(0, 0, 0, 0.22), 0 1px 0 rgba(255, 255, 255, 0.35); }
+body.bench .field > span { border-radius: 2px 0 0 2px; }
+body.bench .plate { border-radius: 2px; box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.2), 0 1px 0 rgba(255, 255, 255, 0.3); }
+body.bench .plate.black { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), 1px 2px 2px rgba(0, 0, 0, 0.3); }
+body.bench .rows { border-radius: 4px; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25), 2px 3px 5px rgba(0, 0, 0, 0.45); }
+
+body.night.bench .bar { background: linear-gradient(100deg, #2C3034 0%, #24272A 26%, #212427 100%); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), inset 0 -2px 3px rgba(0, 0, 0, 0.4); }
+body.night.bench .bar::before { opacity: 0.05; }
+body.night.bench .strip { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10), inset 1px 0 0 rgba(255, 255, 255, 0.04), inset 0 -1px 0 rgba(0, 0, 0, 0.6); }
+body.night.bench .strip::before { opacity: 0.20; }
+body.night.bench .strip.chip { background: #343634; }
+body.night.bench .key i { background: linear-gradient(165deg, #6B6E69, #4B4E4A);
+  box-shadow: 0 0 0 1.5px #0A0B0B, inset 0 1px 0 rgba(255, 255, 255, 0.20), inset 0 -2px 0 rgba(0, 0, 0, 0.28), 2px 3px 4px rgba(0, 0, 0, 0.6); }
+body.night.bench .key:not(:disabled):active i { box-shadow: 0 0 0 1.5px #0A0B0B, inset 0 1px 0 rgba(255, 255, 255, 0.12), 0.5px 1px 1px rgba(0, 0, 0, 0.6); }
+body.night.bench .key[aria-pressed="true"] i { background: linear-gradient(165deg, #F3E06C, #D7C352);
+  box-shadow: 0 0 0 1.5px #0A0B0B, inset 0 1px 0 rgba(255, 255, 255, 0.5), 1px 1.5px 2px rgba(0, 0, 0, 0.6), 0 0 11px rgba(243, 224, 108, 0.6), 0 0 30px rgba(243, 224, 108, 0.22); }
+body.night.bench #play[aria-pressed="true"] i { background: linear-gradient(165deg, #6BE073, #46B54E); box-shadow: 0 0 0 1.5px #0A0B0B, inset 0 1px 0 rgba(255, 255, 255, 0.5), 1px 1.5px 2px rgba(0, 0, 0, 0.6), 0 0 12px rgba(107, 224, 115, 0.65), 0 0 30px rgba(107, 224, 115, 0.25); }
+body.night.bench .key.danger[aria-pressed="true"] i { background: linear-gradient(165deg, #E45E60, #B54142); box-shadow: 0 0 0 1.5px #0A0B0B, inset 0 1px 0 rgba(255, 255, 255, 0.4), 1px 1.5px 2px rgba(0, 0, 0, 0.6), 0 0 12px rgba(228, 94, 96, 0.65), 0 0 30px rgba(228, 94, 96, 0.25); }
+body.night.bench .field { background: linear-gradient(180deg, #0E100F 0%, #171918 100%); box-shadow: 0 0 0 1px #0A0B0B, inset 0 2px 4px rgba(0, 0, 0, 0.9), 0 1px 0 rgba(255, 255, 255, 0.06); }
+body.night.bench .field input, body.night.bench .field select { text-shadow: 0 0 7px rgba(216, 211, 200, 0.30); }
+body.night.bench .plate.white { background: linear-gradient(180deg, #0E100F 0%, #171918 100%); box-shadow: 0 0 0 1px #0A0B0B, inset 0 2px 4px rgba(0, 0, 0, 0.9), 0 1px 0 rgba(255, 255, 255, 0.06); text-shadow: 0 0 7px rgba(216, 211, 200, 0.30); }
+body.night.bench .plate.black { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 1px 2px 3px rgba(0, 0, 0, 0.6); }
+body.night.bench .stage { border-color: #0A0B0B; }

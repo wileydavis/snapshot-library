@@ -1,38 +1,52 @@
-// The bench: the library as things to handle. Chips are slabs with the instrument's card on
-// their face and their colour on their edge; stacks are piles of them in pockets cut into the
-// body; the open stack is dealt out on the table in front; the tray on the right is what SF-000
-// loads. This file draws and is handled; what anything means is main.js's business, told here
-// through setRack / setTray / deal / setMarks and heard back through the handlers.
+// The bench: the library as things to handle, made as SF-000 is made. A powder-coated case in
+// a dark room; on it a faceplate with a cut-out for every stack, the stacks standing in them as
+// piles of chips; in front, on the case itself, the open stack dealt out; on the right the plate
+// of what SF-000 loads. A chip is one of the instrument's plates: a snapshot's card printed on
+// worn black anodizing, its colour on its edge. Everything is drawn with the instrument's own
+// finishes and light (look.js). This file draws and is handled; what anything means is main.js's
+// business, told here through setRack / setTray / deal / setMarks and heard back through the handlers.
 import * as THREE from '../vendor/three.min.js';
 import { faceCanvas, COL, NIGHT } from './card.js';
 import { heat } from './profile.js';
+import { PLATE, PANE, CASE, CORNER, UNIT, SUN, shared, surface, another, setRect, setMap, setColour, dropMap, litColour, makeRoom, slabGeo, plateGeo, Picture, loadWear } from './look.js';
 
-// ---------------------------------------------------------------- sizes (a chip is 4.12 by 1: the card's own shape)
-export const CW = 4.12, CD = 1.0, CT = 0.085;
+// ---------------------------------------------------------------- sizes (a chip is 4.12 by 1: the card's own shape, and as thick as one of the instrument's plates)
+export const CW = 4.12, CD = 1.0, CT = PLATE;
 const PITCH_X = CW + 0.32, PITCH_Z = CD + 0.3;                         // the table's cells
-const POCKET_W = CW + 0.44, POCKET_D = CD + 0.36, POCKET_DEEP = 0.3;                 // (shallow: three chips lie just under the rim, a fourth stands proud)
-const LABEL_D = 0.52;                                                  // a pocket's name plate, in front of it
+const POCKET_W = CW + 0.44, POCKET_D = CD + 0.36;                      // a stack's cut-out in the rack's plate
+const LABEL_D = 0.52;                                                  // a stack's name plate, in front of its cut-out
 const RACK_PITCH_X = POCKET_W + 0.46, RACK_PITCH_Z = POCKET_D + LABEL_D + 0.78;
-const PILE_MOST = 1.25;                                                // the tallest a pile stands, floor to top
+const PILE_MOST = 0.95;                                                // the tallest a pile stands
+const STRATA = 96;                                                     // a pile is drawn as no more layers than this (a taller one's are too fine to see apart)
 const TRAY_W = 6.5, MARGIN = 0.55, LIP = 0.34;
+const RAIL = 0.3, RAIL_H = 0.2;                                        // the rails the rack's plate slides under
 const MINI = 0.3;                                                      // the tray's chips are a quarter the size
-const BAY_X = 1.55, BAY_Z = 1.22, TRAY_TOP = 0.1, TRAY_DEEP = 0.11;
+const BAY_X = 1.55, BAY_Z = 1.22;
 const TILT = (57 * Math.PI) / 180, FOV = 26;
 const MIN_CHIP_PX = 236;
 
-const hex = (c) => new THREE.Color(c);
 const TEAL = '#4490A1';                                                // a sweeping knob's light on the instrument
 const EDGE_NONE = '#9A9B96';                                           // a chip with no sound kept
 const edgeColour = (s) => (s && s.p ? heat(s.p.bright) : EDGE_NONE);
 const clamp = (x, lo, hi) => Math.min(hi, Math.max(lo, x));
 
+// Print: a picture that keeps how much of the surface it covers (clear where nothing is printed).
+function printOf(canvas) {
+  const t = new THREE.CanvasTexture(canvas);
+  t.colorSpace = THREE.NoColorSpace; t.premultiplyAlpha = true; t.anisotropy = 8;
+  return t;
+}
 function plateTexture(draw, w, h) {
   const c = document.createElement('canvas');
   c.width = w; c.height = h;
   draw(c.getContext('2d'), w, h);
-  const t = new THREE.CanvasTexture(c);
-  t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8;
-  return t;
+  return printOf(c);
+}
+// A thing's own number (0 to 999), from its name: which of the wear it has.
+function numberOf(text) {
+  let h = 2166136261;
+  for (let i = 0; i < text.length; i++) { h ^= text.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return (h >>> 0) % 1000;
 }
 const LEGEND = (px) => `600 ${px}px "Barlow Condensed", sans-serif`;
 const LABEL = (px) => `500 ${px}px "Barlow Semi Condensed", sans-serif`;
@@ -49,9 +63,14 @@ export class Bench {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.localClippingEnabled = true;
+    // (a browser with no graphics card draws every point by sums on the processor: there the bench is drawn less sharp, or it could not be used at all. ?sharp asks for it whole.)
+    const gl = this.renderer.getContext(), told = gl.getExtension('WEBGL_debug_renderer_info');
+    this.soft = /swiftshader|llvmpipe|software/i.test(told ? String(gl.getParameter(told.UNMASKED_RENDERER_WEBGL)) : '') && !/[?&]sharp\b/.test(location.search);
+    this.picture = new Picture(this.renderer);
     this.scene = new THREE.Scene();
+    this.scene.background = new THREE.Color(0x000000);
     this.camera = new THREE.PerspectiveCamera(FOV, 1, 1, 400);
     this.ray = new THREE.Raycaster();
 
@@ -62,43 +81,60 @@ export class Bench {
     this.drag = null; this.hover = null; this.gap = -1;
     this.clipTable = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
     this.clipRack = new THREE.Plane(new THREE.Vector3(0, 0, -1), 0);
+    this.clipFar = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+    this.inRack = [this.clipRack, this.clipFar]; this.onTable = [this.clipTable];
     this.frame = 0; this.active = true; this.tick = this.tick.bind(this);
 
     this.makeMaterials();
     this.fixed = new THREE.Group(); this.rack = new THREE.Group(); this.table = new THREE.Group(); this.tray = new THREE.Group(); this.held = new THREE.Group();
     this.scene.add(this.fixed, this.rack, this.table, this.tray, this.held);
+    this.room = makeRoom(); this.scene.add(this.room);
     this.lights();
     this.layout();
     this.listen();
+    loadWear(this.renderer, () => this.poke());
     this.poke();
   }
 
   // ---------------------------------------------------------------- what things are made of
   makeMaterials() {
-    const std = (color, rough = 0.78, metal = 0.0) => new THREE.MeshStandardMaterial({ color: hex(color), roughness: rough, metalness: metal });
     this.mat = {
-      body: std('#7C8683', 0.7, 0.15), plate: std(COL.putty, 0.82), table: std(COL.sea, 0.9), dark: std('#343431', 0.9), floor: std('#262624', 0.95),
-      lip: std(COL.bluegrey, 0.6, 0.2), yellow: std(COL.yellow, 0.6), green: std(COL.green, 0.6), black: std(COL.black, 0.7), white: std(COL.white, 0.8),
-      under: std('#3B3B37', 0.9),
+      case: surface({ kind: 4, worn: 2, metal: 0.55 }),                                 // the case: powder coat
+      rail: surface({ worn: 2, metal: 0.55 }),
+      rack: surface({ worn: 1, number: 371, clip: this.inRack }),                       // the plates: anodized, each with its own wear
+      tray: surface({ worn: 1, number: 644 }),
+      badge: surface({ rough: 0.2, kind: 2 }),                                          // a name plate: one of the instrument's displays (glass; what it shows is light, whatever shade it stands in)
+      yellow: surface({ rough: 0.5, kind: 3, emit: 0.85 }), green: surface({ rough: 0.5, kind: 3, emit: 0.85 }),      // lit, as a lit key is
+      chip: surface({ kind: 1, worn: 1, rect: [0, 0, CW / 2, CD / 2] }),
+      pile: surface({ rough: 0.62, clip: this.inRack }), mini: surface({ rough: 0.62 }),
     };
-    this.mat.rackPlate = this.mat.plate.clone(); this.mat.rackSide = this.mat.dark.clone(); this.mat.rackFloor = this.mat.floor.clone();
-    this.paint();
-    this.pileMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.75 });
-    this.miniMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.75 });
     this.box = new THREE.BoxGeometry(1, 1, 1);
-    this.chipGeo = new THREE.BoxGeometry(CW, CT, CD);
-    this.faceGeo = new THREE.PlaneGeometry(CW, CD); this.faceGeo.rotateX(-Math.PI / 2);
+    this.chipGeo = slabGeo(CW, CD, CT); this.chipGeo.translate(0, -CT / 2, 0);          // (a chip's place is its middle)
+    this.layerGeo = slabGeo(CW, CD, 1, CORNER, 0, 4, 1, false);                         // one layer of a pile, as tall as it is made: its wall alone (its top is under the next)
+    this.capGeo = slabGeo(CW, CD, 1, CORNER, 0, 4);                                     // the top layer of a small pile, which has a top
+    this.badgeGeos = new Map();
+    this.paint();
   }
-  rackClipped(m) { m.clippingPlanes = [this.clipRack]; m.clipShadows = true; return m; }
-  // The bench's finishes, light or dark: the dark one is the dark instrument's (its case, its plates, its room).
+  // The bench's finishes, light or dark: each is its instrument's (the dark one's plates are worn, its case powder-coated).
   paint() {
-    const P = this.dark
-      ? { body: NIGHT.body, plate: NIGHT.plate, table: '#262827', dark: NIGHT.badge, floor: NIGHT.room, lip: '#2F3336', under: NIGHT.badge, room: NIGHT.room }
-      : { body: '#7C8683', plate: COL.putty, table: COL.sea, dark: '#343431', floor: '#262624', lip: COL.bluegrey, under: '#3B3B37', room: COL.black };
-    const m = this.mat;
-    m.body.color.set(P.body); m.plate.color.set(P.plate); m.table.color.set(P.table); m.dark.color.set(P.dark); m.floor.color.set(P.floor); m.lip.color.set(P.lip); m.under.color.set(P.under);
-    m.rackPlate.color.set(P.plate); m.rackSide.color.set(P.dark); m.rackFloor.color.set(P.floor);
-    if (this.scene) this.scene.background = hex(P.room);
+    const D = !!this.dark, m = this.mat;
+    this.P = D
+      ? { body: NIGHT.body, plate: NIGHT.plate, badge: NIGHT.badge, caseRough: 0.40, plateRough: 0.7, blank: NIGHT.plate }
+      : { body: '#A4B1B7', plate: COL.putty, badge: COL.black, caseRough: 0.46, plateRough: 0.82, blank: COL.putty };
+    const P = this.P;
+    shared.uFinish.value = D ? 1 : 0;
+    for (const x of [m.case, m.rail]) { setColour(x, P.body); x.uniforms.uRough.value = P.caseRough; }
+    for (const x of [m.rack, m.tray, m.chip]) { setColour(x, P.plate); x.uniforms.uRough.value = P.plateRough; }
+    setColour(m.badge, P.badge);
+    setColour(m.yellow, litColour(COL.yellow)); setColour(m.green, litColour(COL.green));
+    for (const x of Object.values(m)) Object.assign(x.userData.spec, { colour: x.uniforms.uColour.value.clone(), rough: x.uniforms.uRough.value });
+  }
+  // A name plate's shape, by its size (the same few sizes, over and over).
+  badgeGeo(w, d) {
+    const key = `${w.toFixed(3)}x${d.toFixed(3)}`;
+    let g = this.badgeGeos.get(key);
+    if (!g) { g = slabGeo(w, d, PANE, 1.4 / UNIT, 0.5 / UNIT, 3, 2); this.badgeGeos.set(key, g); }
+    return g;
   }
   // Light or dark. Everything printed is printed again: the chips' faces, the plates.
   setDark(on) {
@@ -107,18 +143,17 @@ export class Bench {
     this.paint();
     for (const f of this.faces.values()) f.tex.dispose();
     this.faces.clear();
-    for (const it of this.items.values()) it.textured = false;
-    this.buildRack(); this.buildTray(); this.place(false);
+    for (const it of this.items.values()) { it.textured = false; setColour(it.mat, this.P.plate); it.mat.uniforms.uRough.value = this.P.plateRough; }
+    this.buildFixed(); this.buildRack(); this.buildTray(); this.place(false);
     this.poke();
   }
 
+  // The light is the instrument's (look.js works it out for every surface); this one is there to throw its shadows.
   lights() {
-    this.scene.add(new THREE.HemisphereLight(0xffffff, 0x9aa3a0, 1.25));
-    const sun = new THREE.DirectionalLight(0xfff6ea, 2.1);
-    sun.position.set(-14, 30, 16);
+    const sun = new THREE.DirectionalLight(0xffffff, 1);
     sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
-    sun.shadow.bias = -0.0006; sun.shadow.normalBias = 0.02; sun.shadow.radius = 3;
+    sun.shadow.mapSize.set(this.soft ? 2048 : 4096, this.soft ? 2048 : 4096);
+    sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.7 / UNIT; sun.shadow.radius = 2;
     this.sun = sun;
     this.scene.add(sun, sun.target);
   }
@@ -126,9 +161,12 @@ export class Bench {
   // ---------------------------------------------------------------- where everything is: from the window's shape
   layout() {
     const w = Math.max(320, this.canvas.clientWidth), h = Math.max(240, this.canvas.clientHeight);
-    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const dpr = this.soft ? 0.6 : Math.min(2, window.devicePixelRatio || 1);
     this.renderer.setPixelRatio(dpr);
     this.renderer.setSize(w, h, false);
+    const size = this.renderer.getDrawingBufferSize(new THREE.Vector2());
+    this.picture.setSize(size.x, size.y);
+    this.room.material.uniforms.uRes.value.copy(size);
     const tf = Math.tan((FOV * Math.PI) / 360), tx = tf * (w / h), sin = Math.sin(TILT), cos = Math.cos(TILT);
     // the table's columns: as many as leave a chip at least MIN_CHIP_PX wide
     const cols = clamp(Math.floor(((w / MIN_CHIP_PX) * CW - TRAY_W - 3 * MARGIN + 0.32) / PITCH_X), 2, 12);
@@ -147,8 +185,11 @@ export class Bench {
 
     const L = this.L = { cols, W, w, h, zNear, zFar };
     L.rackRows = zNear - zFar > 16.5 ? 2 : 1;
-    L.zr0 = zFar + 0.75;                                             // the rack's first row begins a pile's height under the top of the window
+    L.zc0 = zFar + 0.42;                                             // the case's far edge: a strip of the room shows beyond it
+    L.zf0 = L.zc0 + 0.2;                                             // the far rail
+    L.zr0 = L.zf0 + RAIL - 0.25;                                     // the rack's first row begins a little this side of it
     L.zr1 = L.zr0 + 0.55 + L.rackRows * RACK_PITCH_Z;                // and the rack ends at the lip
+    L.caseHalf = this.halfWidthAt(L.zc0) - 0.5;                      // the case is wider than the window is at its near edge: its far corners show, with the room round them
     L.zt0 = L.zr1 + LIP + 0.22;                                      // the table's first row
     L.zt1 = zNear + 0.6;
     L.rows = Math.max(1, Math.ceil((zNear - L.zt0) / PITCH_Z));       // rows that show at all
@@ -159,13 +200,21 @@ export class Bench {
     L.rackX0 = -(L.rackCols * RACK_PITCH_X - 0.46) / 2;
     this.clipTable.constant = -(L.zr1 + LIP * 0.5);
     this.clipRack.constant = L.zr1 + LIP * 0.5;
+    this.clipFar.constant = -(L.zf0 + RAIL * 0.5);
 
-    // the light: from over the left shoulder, far enough off to take the whole bench in
-    const mid = (zNear + zFar) / 2, far = this.halfWidthAt(zFar) + 2, deep = (zNear - zFar) / 2 + 4, R = Math.max(far, deep) * 2;
-    this.sun.target.position.set(0, 0, mid);
-    this.sun.position.set(-0.3 * R, 0.9 * R, mid + 0.32 * R);
+    // the light: the instrument's, from behind and to the left. Its shadows are worked out for what the window shows.
+    const mid = (zNear + zFar) / 2, far = this.halfWidthAt(zFar) + 1, R = Math.max(far, (zNear - zFar) / 2) * 3;
+    const at = new THREE.Vector3(0, 0, mid), from = at.clone().addScaledVector(SUN, R);
+    this.sun.target.position.copy(at); this.sun.position.copy(from);
+    const f = SUN.clone().negate(), sx = new THREE.Vector3().crossVectors(f, new THREE.Vector3(0, 1, 0)).normalize(), sy = new THREE.Vector3().crossVectors(sx, f);
+    const box = { x0: 1e9, x1: -1e9, y0: 1e9, y1: -1e9, z0: 1e9, z1: -1e9 }, p = new THREE.Vector3();
+    for (const x of [-far, far]) for (const y of [-0.2, PILE_MOST + 0.4]) for (const z of [zFar - 1, zNear + 1.5]) {
+      p.set(x, y, z).sub(at);
+      const a = p.dot(sx), b = p.dot(sy), c = p.dot(f) + R;
+      box.x0 = Math.min(box.x0, a); box.x1 = Math.max(box.x1, a); box.y0 = Math.min(box.y0, b); box.y1 = Math.max(box.y1, b); box.z0 = Math.min(box.z0, c); box.z1 = Math.max(box.z1, c);
+    }
     const s = this.sun.shadow.camera;
-    s.left = -far * 1.1; s.right = far * 1.1; s.top = deep * 1.2; s.bottom = -deep * 1.2; s.near = R * 0.1; s.far = R * 3;
+    s.left = box.x0; s.right = box.x1; s.bottom = box.y0; s.top = box.y1; s.near = Math.max(0.1, box.z0 - 2); s.far = box.z1 + 2;
     s.updateProjectionMatrix();
     // a chip's face is drawn as fine as it shows
     this.faceScale = clamp(((w / W) * CW * dpr) / 272 * 1.12, 1.5, 3);
@@ -182,7 +231,7 @@ export class Bench {
   turnRack(by) { const row = clamp(this.rackRow + by, 0, this.rackRowsMost()); if (row !== this.rackRow) { this.rackRow = row; this.tellRows(); this.poke(); } }
 
   // Take a group's things away. What a thing owns goes with it (userData: geo, mat, map); what it
-  // shares (the one box, the body's finishes, a chip's face) stays.
+  // shares (the one box, the bench's finishes, a chip's face) stays.
   clear(group) {
     for (const o of [...group.children]) {
       group.remove(o);
@@ -190,34 +239,49 @@ export class Bench {
         if (m.isInstancedMesh) m.dispose();
         const u = m.userData || {};
         if (u.geo) m.geometry?.dispose();
-        if (u.mat) (Array.isArray(m.material) ? m.material : [m.material]).forEach((x) => { if (u.map) x?.map?.dispose(); x?.dispose(); });
+        if (u.mat) (Array.isArray(m.material) ? m.material : [m.material]).forEach((x) => { if (u.map && x) dropMap(x); x?.dispose(); });
       });
     }
   }
-  slab(group, mat, x0, z0, x1, z1, y0, y1, shadow = true) {
-    const m = new THREE.Mesh(this.box, mat);
-    m.scale.set(x1 - x0, y1 - y0, z1 - z0);
-    m.position.set((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2);
-    m.receiveShadow = true; m.castShadow = shadow;
+  // A rounded block of one of the bench's finishes, standing on y0. Its finish knows its own shape (for the wear at its edges).
+  block(group, like, x0, z0, x1, z1, y0, h, corner, roll, changes = {}) {
+    const w = x1 - x0, d = z1 - z0;
+    const m = new THREE.Mesh(slabGeo(w, d, h, corner, roll), another(like, { rect: [0, 0, w / 2, d / 2], ...changes }));
+    m.position.set((x0 + x1) / 2, y0, (z0 + z1) / 2);
+    m.receiveShadow = true; m.castShadow = true; m.userData = { geo: true, mat: true };
     group.add(m);
     return m;
   }
-  label(group, tex, x0, z0, x1, z1, y, mat = null) {
-    const g = new THREE.PlaneGeometry(x1 - x0, z1 - z0); g.rotateX(-Math.PI / 2);
-    const m = new THREE.Mesh(g, mat || new THREE.MeshStandardMaterial({ map: tex, roughness: 0.8 }));
+  // A plain bar (a frame's side, a mark), of a finish that is the bench's own.
+  bar(group, mat, x0, z0, x1, z1, y0, y1, owns = false) {
+    const m = new THREE.Mesh(this.box, mat);
+    m.scale.set(x1 - x0, y1 - y0, z1 - z0);
+    m.position.set((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2);
+    m.receiveShadow = true; m.castShadow = true; if (owns) m.userData = { mat: true };
+    group.add(m);
+    return m;
+  }
+  // A name plate: a small display with its print on it, standing on y.
+  badge(group, tex, x0, z0, x1, z1, y, { colour = null, clip = null } = {}) {
+    const m = new THREE.Mesh(this.badgeGeo(x1 - x0, z1 - z0), another(this.mat.badge, { map: tex, clip, ...(colour ? { colour } : {}) }));
     m.position.set((x0 + x1) / 2, y, (z0 + z1) / 2);
-    m.receiveShadow = true; m.userData = { geo: true, mat: true, map: true };
+    m.receiveShadow = true; m.castShadow = true; m.userData = { mat: true, map: true };
     group.add(m);
     return m;
   }
 
-  // The body, the table, the lip between the rack and the table.
+  // The case, the rails the rack slides under, the room under and behind it all.
   buildFixed() {
-    const L = this.L, far = this.halfWidthAt(L.zFar) + 6;
+    const L = this.L, half = L.caseHalf, zEnd = L.zNear + 7;
     this.clear(this.fixed);
-    this.slab(this.fixed, this.mat.body, -far, L.zr1, far, L.zNear + 6, -1.4, -0.05, false);                              // (the rack is a plate of its own, behind the lip)
-    this.slab(this.fixed, this.mat.table, -L.W / 2, L.zr1 + LIP, L.trayX - MARGIN * 0.5, L.zNear + 4, -0.3, 0, false);       // the table
-    this.slab(this.fixed, this.mat.lip, -far, L.zr1, far, L.zr1 + LIP, -0.9, 0.3);                                          // the lip chips slide under
+    this.block(this.fixed, this.mat.case, -half, L.zc0, half, zEnd, -CASE, CASE, 26 / UNIT, 4.5 / UNIT);
+    this.block(this.fixed, this.mat.rail, -half + 0.1, L.zf0, half - 0.1, L.zf0 + RAIL, 0, RAIL_H, 0.07, 0.035);                  // the far rail
+    this.block(this.fixed, this.mat.rail, -half + 0.1, L.zr1, half - 0.1, L.zr1 + LIP, 0, RAIL_H + 0.06, 0.07, 0.035);            // the lip chips slide under
+    // the room: one sheet under everything, with the glow of the case's outline on it
+    const far = this.halfWidthAt(L.zFar) * 6;
+    this.room.scale.set(far * 2, 1, far * 2); this.room.position.z = (L.zNear + L.zFar) / 2;
+    const inX = half * 0.1, inZ = 1.3;
+    this.room.material.uniforms.uBox.value.set(0, (L.zc0 + zEnd) / 2, half - inX, (zEnd - L.zc0) / 2 - inZ);
   }
 
   // ---------------------------------------------------------------- the rack: pockets, piles, their plates
@@ -225,66 +289,67 @@ export class Bench {
   setRack(piles) { this.rackPiles = piles; this.rackRow = clamp(this.rackRow, 0, this.rackRowsMost()); this.buildRack(); this.poke(); this.tellRows(); }
   rackRowsMost() { return Math.max(0, Math.ceil(this.rackPiles.length / this.L.rackCols) - this.L.rackRows); }
 
+  // A pile's layers, top first: [{ bright, t }]. A pile stands no taller than PILE_MOST, and a tall one is drawn in fewer layers than it has chips.
+  strata(heats, thick, most) {
+    const n = heats.length;
+    if (!n) return { layers: [], top: 0 };
+    const top = Math.min(n * thick, most), m = Math.min(n, STRATA), t = top / m, layers = [];
+    for (let k = 0; k < m; k++) layers.push(heats[Math.floor((k * n) / m)]);
+    return { layers, top, t };
+  }
+
   buildRack() {
     const L = this.L, piles = this.rackPiles;
     this.clear(this.rack);
     this.rackHits = [];
     const rows = Math.max(L.rackRows, Math.ceil(piles.length / L.rackCols));
-    // (the plate runs on under the lip and the table, so that slid back it still meets the lip)
-    const x0 = -this.halfWidthAt(L.zFar) - 6, x1 = -x0, z0 = L.zr0 - 9, z1 = L.zr0 + 0.55 + (rows + L.rackRows + 1) * RACK_PITCH_Z;
-    // the plate, with a pocket cut out for every pile
-    const shape = new THREE.Shape([new THREE.Vector2(x0, z0), new THREE.Vector2(x1, z0), new THREE.Vector2(x1, z1), new THREE.Vector2(x0, z1)]);
+    // (the plate runs on under the rails, so that slid back it still fills the space between them)
+    const x0 = -L.caseHalf + 0.16, x1 = -x0, z0 = L.zf0 - 0.4, z1 = L.zr0 + 0.55 + (rows + L.rackRows + 1) * RACK_PITCH_Z;
     const at = (i) => {
       const col = i % L.rackCols, row = Math.floor(i / L.rackCols);
       const x = L.rackX0 + col * RACK_PITCH_X, z = L.zr0 + 0.55 + row * RACK_PITCH_Z;
       return { x, z, row };
     };
-    piles.forEach((p, i) => {
-      const { x, z } = at(i);
-      const hole = new THREE.Path();
-      hole.moveTo(x, z); hole.lineTo(x, z + POCKET_D); hole.lineTo(x + POCKET_W, z + POCKET_D); hole.lineTo(x + POCKET_W, z); hole.closePath();
-      shape.holes.push(hole);
-    });
-    const geo = new THREE.ExtrudeGeometry(shape, { depth: POCKET_DEEP, bevelEnabled: false });
-    geo.rotateX(Math.PI / 2);
-    const plate = new THREE.Mesh(geo, [this.rackClipped(this.mat.rackPlate), this.rackClipped(this.mat.rackSide)]);
+    // the plate, with a cut-out for every pile: in it the case shows, and the pile stands on that
+    const holes = piles.map((p, i) => { const { x, z } = at(i); return { x, z, w: POCKET_W, d: POCKET_D }; });
+    setRect(this.mat.rack, [(x0 + x1) / 2, (z0 + z1) / 2, (x1 - x0) / 2, (z1 - z0) / 2]);
+    const plate = new THREE.Mesh(plateGeo(x0, z0, x1, z1, PLATE, PLATE, holes), this.mat.rack);
     plate.receiveShadow = true; plate.castShadow = true; plate.userData = { geo: true };
     this.rack.add(plate);
-    this.slab(this.rack, this.rackClipped(this.mat.rackFloor), x0, z0, x1, z1, -POCKET_DEEP - 0.6, -POCKET_DEEP, false);
 
-    // the piles: one drawn thing for every chip in every pile
-    const total = piles.reduce((n, p) => n + Math.min(p.heats ? p.heats.length : 0, 4000), 0);
-    const inst = new THREE.InstancedMesh(this.box, this.rackClipped(this.pileMat), Math.max(1, total));
+    // the piles: one drawn thing for every layer under the top chip of every pile
+    const made = piles.map((p) => this.strata(p.heats || [], CT, PILE_MOST));
+    const total = made.reduce((n, s) => n + Math.max(0, s.layers.length - 1), 0);
+    const inst = new THREE.InstancedMesh(this.layerGeo, this.mat.pile, Math.max(1, total));
     inst.castShadow = true; inst.receiveShadow = true;
     const m4 = new THREE.Matrix4(), c = new THREE.Color();
     let n = 0;
     piles.forEach((p, i) => {
       const { x, z, row } = at(i);
-      const heats = (p.heats || []).slice(0, 4000);
-      const t = heats.length ? Math.min(CT, PILE_MOST / heats.length) : 0;
+      const { layers, top, t } = made[i];
       const cx = x + POCKET_W / 2, cz = z + POCKET_D / 2;
-      heats.forEach((b, k) => {                                      // (the top chip is heats[0])
-        const y = -POCKET_DEEP + (heats.length - 1 - k + 0.5) * t;
-        m4.makeScale(CW, t * 0.94, CD); m4.setPosition(cx, y, cz);
+      layers.forEach((b, k) => {                                     // (the top chip is layers[0])
+        if (k === 0) return;
+        m4.makeScale(1, t * 0.94, 1); m4.setPosition(cx, (layers.length - 1 - k) * t, cz);
         inst.setMatrixAt(n, m4);
         inst.setColorAt(n, c.set(b < 0 ? EDGE_NONE : heat(b)));
         n++;
       });
-      const top = -POCKET_DEEP + heats.length * t;
-      if (p.top) {
-        const f = new THREE.Mesh(this.faceGeo, this.rackClipped(new THREE.MeshStandardMaterial({ map: this.face(p.top, null), roughness: 0.85 })));
-        f.position.set(cx, top + 0.004, cz); f.receiveShadow = true;
-        f.userData = { mat: true };                                 // (its face is the cache's: face())
-        this.rack.add(f);
+      if (layers.length && p.top) {                                  // the top chip: a chip, with its face
+        const chip = new THREE.Mesh(this.chipGeo, another(this.mat.chip, { map: this.face(p.top, null), edge: edgeColour(p.top), number: numberOf(p.top.uid), clip: this.inRack }));
+        chip.scale.y = (t * 0.94) / CT; chip.position.set(cx, top - t + t * 0.47, cz);
+        chip.castShadow = true; chip.receiveShadow = true;
+        chip.userData = { mat: true };                              // (its face is the cache's: face())
+        this.rack.add(chip);
       }
       // its plate: the name, how many, and what it is
-      const tex = plateTexture((g, w, h) => this.drawPlate(g, w, h, p), 736, 84);
-      this.label(this.rack, tex, x, z + POCKET_D + 0.08, x + POCKET_W, z + POCKET_D + 0.08 + LABEL_D, 0.012, this.rackClipped(new THREE.MeshStandardMaterial({ map: tex, roughness: 0.8 })));
-      if (p.open) {                                                  // the open pile: a yellow frame round its pocket
-        const y = 0.02, e = 0.09;
-        for (const [a, b, cc, d] of [[x - e, z - e, x + POCKET_W + e, z], [x - e, z + POCKET_D, x + POCKET_W + e, z + POCKET_D + e], [x - e, z, x, z + POCKET_D], [x + POCKET_W, z, x + POCKET_W + e, z + POCKET_D]]) {
-          this.slab(this.rack, this.rackClipped(this.mat.yellow.clone()), a, b, cc, d, 0, y + 0.03, false).userData = { mat: true };
-        }
+      const tone = this.plateTone(p);
+      const tex = plateTexture((g, w, h) => this.drawPlate(g, w, h, p, tone), 736, 84);
+      this.badge(this.rack, tex, x, z + POCKET_D + 0.08, x + POCKET_W, z + POCKET_D + 0.08 + LABEL_D, PLATE, { colour: tone[0], clip: this.inRack });
+      if (p.open) {                                                  // the open pile: a lit yellow frame round its cut-out
+        const e = 0.07, y1 = PLATE + 0.035, lit = another(this.mat.yellow, { clip: this.inRack });
+        const sides = [[x - e, z - e, x + POCKET_W + e, z], [x - e, z + POCKET_D, x + POCKET_W + e, z + POCKET_D + e], [x - e, z, x, z + POCKET_D], [x + POCKET_W, z, x + POCKET_W + e, z + POCKET_D]];
+        sides.forEach(([a, b, cc, d], k) => { this.bar(this.rack, lit, a, b, cc, d, PLATE, y1, k === 0).castShadow = false; });
       }
       this.rackHits.push({ key: p.key, pile: p, row, x0: x - 0.2, x1: x + POCKET_W + 0.2, z0: z - 0.15, z1: z + POCKET_D + LABEL_D + 0.2, top, cx, cz });
     });
@@ -295,26 +360,27 @@ export class Bench {
     this.rack.position.z = this.rackShift;
   }
 
-  drawPlate(g, w, h, p) {
-    // (dark: every plate is dark with light print, as the dark instrument's are; the open one is yellow in both)
+  // A name plate's ground and print, by what its stack is (dark: every plate is dark with light print, as the dark instrument's are; the open one is yellow in both).
+  plateTone(p) {
     const tones = this.dark
       ? { black: [NIGHT.badge, COL.lit], white: [NIGHT.paper, NIGHT.ink], blue: ['#232B31', COL.bluegrey], grey: [NIGHT.plate2, NIGHT.dim], amber: ['#2C2416', COL.amber], yellow: [COL.yellow, COL.black] }
       : { black: [COL.black, COL.lit], white: [COL.white, COL.black], blue: [COL.bluegrey, COL.black], grey: [COL.grey, COL.black], amber: [COL.amber, COL.black], yellow: [COL.yellow, COL.black] };
-    const [bg, fg] = tones[p.open ? 'yellow' : p.tone] || tones.black;
-    g.fillStyle = this.dark ? NIGHT.room : COL.black; g.fillRect(0, 0, w, h);
-    g.fillStyle = bg; g.fillRect(3, 3, w - 6, h - 6);
+    return tones[p.open ? 'yellow' : p.tone] || tones.black;
+  }
+  drawPlate(g, w, h, p, [bg, fg]) {
+    g.fillStyle = bg; g.fillRect(0, 0, w, h);
     g.textBaseline = 'middle';
     const count = p.add ? '' : String(p.count);
     g.font = LEGEND(44);
     const wc = count ? Math.ceil(g.measureText(count).width) + 34 : 0;
-    let right = w - 3;
+    let right = w;
     if (count) {                                                     // (how many: turned over on a light plate; on a dark one a quieter box, as the dark instrument's tags are)
       const quiet = this.dark && !p.open;
-      g.fillStyle = quiet ? NIGHT.plate : fg; g.fillRect(right - wc, 3, wc, h - 6);
+      g.fillStyle = quiet ? NIGHT.plate : fg; g.fillRect(right - wc, 0, wc, h);
       g.fillStyle = quiet ? fg : bg; g.textAlign = 'center'; g.fillText(count, right - wc / 2, h / 2 + 3);
       right -= wc;
     }
-    if (p.lamp) { g.fillStyle = this.dark ? NIGHT.room : COL.black; g.fillRect(right - 58, 3, 58, h - 6); g.fillStyle = COL.green; g.fillRect(right - 46, 20, 34, h - 40); right -= 58; }
+    if (p.lamp) { g.fillStyle = this.dark ? NIGHT.room : COL.black; g.fillRect(right - 58, 0, 58, h); g.fillStyle = COL.green; g.fillRect(right - 46, 20, 34, h - 40); right -= 58; }
     g.textAlign = 'left'; g.fillStyle = fg;
     let x = 22;
     if (p.kind) {                                                    // what kind of stack, small, before its name
@@ -334,58 +400,43 @@ export class Bench {
   setTray(tray) { this.trayData = tray; this.buildTray(); this.poke(); }
 
   buildTray() {
-    const L = this.L, T = this.trayData, x0 = L.trayX, x1 = x0 + TRAY_W, z0 = L.zt0 - 0.05;
+    const L = this.L, T = this.trayData, x0 = L.trayX, x1 = x0 + TRAY_W, z0 = L.zt0 - 0.05, D = this.dark;
     this.clear(this.tray);
     this.trayHits = [];
     const zEnd = L.zNear + 4;
-    // its plate, raised a little off the body, with a pocket for each bay and each stack
-    const shape = new THREE.Shape([new THREE.Vector2(x0, z0), new THREE.Vector2(x1, z0), new THREE.Vector2(x1, zEnd), new THREE.Vector2(x0, zEnd)]);
-    const cut = (x, z, w, d) => { const hole = new THREE.Path(); hole.moveTo(x, z); hole.lineTo(x, z + d); hole.lineTo(x + w, z + d); hole.lineTo(x + w, z); hole.closePath(); shape.holes.push(hole); };
+    // its plate, standing on the case, with a cut-out for each bay and each stack
     const mw = CW * MINI + 0.14, md = CD * MINI + 0.12;
     const bayAt = (i) => ({ x: x0 + 0.2 + (i % 4) * BAY_X, z: z0 + 0.62 + Math.floor(i / 4) * BAY_Z });
-    for (let i = 0; i < 16; i++) { const b = bayAt(i); cut(b.x + 0.04, b.z + 0.08, mw, md); }
+    const holes = [];
+    for (let i = 0; i < 16; i++) { const b = bayAt(i); holes.push({ x: b.x + 0.04, z: b.z + 0.08, w: mw, d: md }); }
     const zs = z0 + 0.62 + 4 * BAY_Z + 0.56;                         // the loaded stacks begin here
     const room = Math.max(1, Math.floor((L.zNear - 0.2 - zs) / 0.6));
     const stacks = (T.stacks || []).slice(0, room);
-    stacks.forEach((s, i) => cut(x0 + 0.3, zs + i * 0.6 + 0.06, mw, md));
-    const geo = new THREE.ExtrudeGeometry(shape, { depth: TRAY_DEEP, bevelEnabled: false });
-    geo.rotateX(Math.PI / 2); geo.translate(0, TRAY_TOP, 0);
-    const plate = new THREE.Mesh(geo, [this.mat.plate, this.mat.dark]);
+    stacks.forEach((s, i) => holes.push({ x: x0 + 0.3, z: zs + i * 0.6 + 0.06, w: mw, d: md }));
+    setRect(this.mat.tray, [(x0 + x1) / 2, (z0 + zEnd) / 2, TRAY_W / 2, (zEnd - z0) / 2]);
+    const plate = new THREE.Mesh(plateGeo(x0, z0, x1, zEnd, PLATE, PLATE, holes), this.mat.tray);
     plate.receiveShadow = true; plate.castShadow = true; plate.userData = { geo: true };
     this.tray.add(plate);
-    this.slab(this.tray, this.mat.floor, x0, z0, x1, zEnd, -0.3, TRAY_TOP - TRAY_DEEP, false);
 
     const title = (text, z, sub) => {
       const tex = plateTexture((g, w, h) => {
-        g.fillStyle = this.dark ? NIGHT.badge : COL.black; g.fillRect(0, 0, w, h);
         g.textBaseline = 'middle'; g.fillStyle = COL.lit; g.font = LEGEND(40); g.letterSpacing = '3px';
         g.fillText(text, 18, h / 2 + 2);
         if (sub) { g.font = LABEL(24); g.textAlign = 'right'; g.letterSpacing = '2px'; g.fillText(sub, w - 16, h / 2 + 2); }
         g.letterSpacing = '0px';
       }, 912, 60);
-      this.label(this.tray, tex, x0 + 0.2, z, x1 - 0.2, z + 0.4, TRAY_TOP + 0.012);
+      this.badge(this.tray, tex, x0 + 0.2, z, x1 - 0.2, z + 0.4, PLATE);
     };
     title('SF-000', z0 + 0.12, 'WHAT LOAD BRINGS: KNOBS 1 TO 16');
 
-    const total = [...(T.bays || []), ...stacks].reduce((n, b) => n + (b && b.heats ? Math.min(b.heats.length, 400) : 0), 0);
-    const inst = new THREE.InstancedMesh(this.box, this.miniMat, Math.max(1, total));
-    inst.castShadow = true; inst.receiveShadow = true;
-    const m4 = new THREE.Matrix4(), c = new THREE.Color();
-    let n = 0;
-    const pile = (heats, cx, cz) => {
-      heats = (heats || []).slice(0, 400);
-      const t = heats.length ? Math.min(0.06, 0.6 / heats.length) : 0;
-      heats.forEach((b, k) => {
-        m4.makeScale(CW * MINI, t * 0.92, CD * MINI); m4.setPosition(cx, TRAY_TOP - TRAY_DEEP + (heats.length - 1 - k + 0.5) * t, cz);
-        inst.setMatrixAt(n, m4); inst.setColorAt(n, c.set(b < 0 ? EDGE_NONE : heat(b))); n++;
-      });
-    };
+    const made = [];
+    const pile = (heats, cx, cz) => made.push({ ...this.strata((heats || []).slice(0, 4000), 0.06, 0.6), cx, cz });
     for (let i = 0; i < 16; i++) {
       const b = bayAt(i), bay = (T.bays || [])[i] || {};
       pile(bay.heats, b.x + 0.04 + mw / 2, b.z + 0.08 + md / 2);
+      const ground = bay.open ? COL.yellow : bay.key ? (D ? NIGHT.paper : COL.white) : D ? NIGHT.plate2 : COL.grey;
       const tex = plateTexture((g, w, h) => {
-        const D = this.dark;
-        g.fillStyle = bay.open ? COL.yellow : bay.key ? (D ? NIGHT.paper : COL.white) : D ? NIGHT.plate2 : COL.grey; g.fillRect(0, 0, w, h);
+        g.fillStyle = ground; g.fillRect(0, 0, w, h);
         // its number: on teal where the knob holds a macro (it sweeps), on amber where it holds a stack (it steps), as the instrument lights them
         g.fillStyle = bay.key ? (bay.sweeps ? TEAL : COL.amber) : D ? NIGHT.badge : COL.black; g.fillRect(0, 0, 52, h);
         g.textBaseline = 'middle'; g.textAlign = 'center'; g.fillStyle = bay.key ? COL.black : D ? NIGHT.dim : COL.lit; g.font = LEGEND(40);
@@ -394,27 +445,41 @@ export class Bench {
         g.fillText(fitText(g, String(bay.name || '').toUpperCase(), w - 64), 60, h / 2 + 2);
         g.letterSpacing = '0px';
       }, 240, 56);
-      this.label(this.tray, tex, b.x + 0.04, b.z + 0.08 + md + 0.1, b.x + 0.04 + mw, b.z + 0.08 + md + 0.44, TRAY_TOP + 0.012);
+      this.badge(this.tray, tex, b.x + 0.04, b.z + 0.08 + md + 0.1, b.x + 0.04 + mw, b.z + 0.08 + md + 0.44, PLATE, { colour: ground });
       this.trayHits.push({ bay: i + 1, key: bay.key || null, pile: bay, x0: b.x - 0.04, x1: b.x + BAY_X - 0.04, z0: b.z, z1: b.z + BAY_Z, cx: b.x + 0.04 + mw / 2, cz: b.z + 0.3 });
     }
     title('POCKETS', zs - 0.48, stacks.length < (T.stacks || []).length ? `${stacks.length} OF ${T.stacks.length} SHOWN` : 'DROP A STACK HERE TO LOAD IT');
     stacks.forEach((s, i) => {
       const z = zs + i * 0.6;
       pile(s.heats, x0 + 0.3 + mw / 2, z + 0.06 + md / 2);
+      const ground = s.open ? COL.yellow : D ? NIGHT.paper : COL.white;
       const tex = plateTexture((g, w, h) => {
-        g.fillStyle = s.open ? COL.yellow : this.dark ? NIGHT.paper : COL.white; g.fillRect(0, 0, w, h);
-        g.textBaseline = 'middle'; g.fillStyle = this.dark && !s.open ? NIGHT.ink : COL.black; g.font = LEGEND(34); g.letterSpacing = '2px';
+        g.fillStyle = ground; g.fillRect(0, 0, w, h);
+        g.textBaseline = 'middle'; g.fillStyle = D && !s.open ? NIGHT.ink : COL.black; g.font = LEGEND(34); g.letterSpacing = '2px';
         const count = String(s.count);
         g.textAlign = 'right'; g.fillText(count, w - 12, h / 2 + 2);
         g.textAlign = 'left'; g.fillText(fitText(g, String(s.name || '').toUpperCase(), w - g.measureText(count).width - 40), 12, h / 2 + 2);
         g.letterSpacing = '0px';
       }, 736, 52);
-      this.label(this.tray, tex, x0 + 0.3 + mw + 0.14, z + 0.07, x1 - 0.22, z + 0.07 + md - 0.02, TRAY_TOP + 0.012);
+      this.badge(this.tray, tex, x0 + 0.3 + mw + 0.14, z + 0.07, x1 - 0.22, z + 0.07 + md - 0.02, PLATE, { colour: ground });
       this.trayHits.push({ stack: true, key: s.key, pile: s, x0, x1, z0: z, z1: z + 0.6, cx: x0 + 3, cz: z + 0.3 });
     });
     this.trayHits.push({ pockets: true, key: null, x0, x1, z0: zs - 0.5, z1: zEnd, cx: x0 + TRAY_W / 2, cz: Math.min(L.zNear - 0.8, zs + stacks.length * 0.6 + 0.6) });
-    inst.count = n; inst.instanceMatrix.needsUpdate = true; if (inst.instanceColor) inst.instanceColor.needsUpdate = true;
-    this.tray.add(inst);
+    // the small piles: every layer of every one, drawn together
+    const total = made.reduce((n, s) => n + s.layers.length, 0);
+    const m4 = new THREE.Matrix4(), c = new THREE.Color();
+    for (const [geo, want] of [[this.layerGeo, (k) => k > 0], [this.capGeo, (k) => k === 0]]) {
+      const inst = new THREE.InstancedMesh(geo, this.mat.mini, Math.max(1, total));
+      inst.castShadow = true; inst.receiveShadow = true;
+      let n = 0;
+      for (const s of made) s.layers.forEach((b, k) => {
+        if (!want(k)) return;
+        m4.makeScale(MINI, s.t * 0.92, MINI); m4.setPosition(s.cx, (s.layers.length - 1 - k) * s.t, s.cz);
+        inst.setMatrixAt(n, m4); inst.setColorAt(n, c.set(b < 0 ? EDGE_NONE : heat(b))); n++;
+      });
+      inst.count = n; inst.instanceMatrix.needsUpdate = true; if (inst.instanceColor) inst.instanceColor.needsUpdate = true;
+      this.tray.add(inst);
+    }
   }
 
   // ---------------------------------------------------------------- chips' faces
@@ -423,8 +488,7 @@ export class Bench {
     const stamp = `${label}|${s.name}`;
     if (had && had.stamp === stamp) { had.used = ++this.frame; return had.tex; }
     if (had) had.tex.dispose();
-    const tex = new THREE.CanvasTexture(faceCanvas(s, label, this.faceScale || 2));
-    tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 8;
+    const tex = printOf(faceCanvas(s, label, this.faceScale || 2));
     this.faces.set(key, { tex, stamp, used: ++this.frame });
     if (this.faces.size > 280) {                                     // the least lately seen go, unless they lie on the bench now
       const live = new Set([...this.items.values()].map((it) => it.uid));
@@ -455,9 +519,8 @@ export class Bench {
   }
   makeItem(d, id) {
     const it = { id, uid: d.uid, group: new THREE.Group() };
-    it.edge = new THREE.MeshStandardMaterial({ color: hex(edgeColour(d.s)), roughness: 0.7, clippingPlanes: [this.clipTable], clipShadows: true });
-    it.top = new THREE.MeshStandardMaterial({ roughness: 0.85, clippingPlanes: [this.clipTable], clipShadows: true });
-    it.mesh = new THREE.Mesh(this.chipGeo, [it.edge, it.edge, it.top, this.mat.under, it.edge, it.edge]);
+    it.mat = another(this.mat.chip, { edge: edgeColour(d.s), number: numberOf(d.uid), clip: this.onTable });
+    it.mesh = new THREE.Mesh(this.chipGeo, it.mat);
     it.mesh.castShadow = true; it.mesh.receiveShadow = true;
     it.group.add(it.mesh);
     this.table.add(it.group);
@@ -465,7 +528,7 @@ export class Bench {
   }
   dropItem(it) {
     this.table.remove(it.group);
-    it.edge.dispose(); it.top.dispose();
+    it.mat.dispose();
     if (it.ring) it.ring.material.dispose();
     if (it.clip) it.clip.material.dispose();
   }
@@ -500,7 +563,7 @@ export class Bench {
       seen.add(id);
       it.index = this.dealt === list ? j : this.dealt.indexOf(d);
       it.s = d.s; it.label = d.label;
-      if (!it.textured) { it.top.map = this.face(d.s, d.label); it.top.needsUpdate = true; it.textured = true; }
+      if (!it.textured) { setMap(it.mat, this.face(d.s, d.label)); it.textured = true; }
       const p = this.spot(slot);
       const lift = it.uid === this.marks.selected ? 0.2 : this.hover && this.hover.key === it.id ? 0.07 : 0;
       it.target = { x: p.x, y: CT / 2 + 0.006 + lift, z: p.z };
@@ -519,9 +582,9 @@ export class Bench {
     if ((it.ringTone || '') !== want) {
       if (it.ring) { it.group.remove(it.ring); it.ring.material.dispose(); it.ring = null; }
       if (want) {
-        const m = this.mat[want].clone(); m.clippingPlanes = [this.clipTable];
-        it.ring = new THREE.Mesh(this.box, m);
-        it.ring.scale.set(CW + 0.2, CT * 0.55, CD + 0.2); it.ring.position.y = -CT * 0.25;
+        if (!this.ringGeo) this.ringGeo = slabGeo(CW + 0.2, CD + 0.2, CT * 0.55, CORNER + 0.1, 0.012);
+        it.ring = new THREE.Mesh(this.ringGeo, another(this.mat[want], { clip: this.onTable }));
+        it.ring.position.y = -CT * 0.5 - 0.002;
         it.ring.castShadow = true;
         it.group.add(it.ring);
       }
@@ -530,8 +593,7 @@ export class Bench {
     if (!!it.clip !== mark) {
       if (it.clip) { it.group.remove(it.clip); it.clip.material.dispose(); it.clip = null; }
       if (mark) {
-        const m = this.mat.yellow.clone(); m.clippingPlanes = [this.clipTable];
-        it.clip = new THREE.Mesh(this.box, m);
+        it.clip = new THREE.Mesh(this.box, another(this.mat.yellow, { clip: this.onTable }));
         it.clip.scale.set(0.2, CT + 0.07, CD + 0.1); it.clip.position.set(-CW / 2 + 0.02, 0.01, 0);
         it.clip.castShadow = true;
         it.group.add(it.clip);
@@ -580,7 +642,7 @@ export class Bench {
       p.x += (t.x - p.x) * Math.min(1, k * 1.6); p.z += (t.z - p.z) * Math.min(1, k * 1.6); p.y += (1.15 - p.y) * k;
       if (Math.abs(t.x - p.x) + Math.abs(t.z - p.z) + Math.abs(1.15 - p.y) > 0.004) moving = true;
     }
-    if (this.dirty || moving) { this.renderer.render(this.scene, this.camera); this.dirty = false; }
+    if (this.dirty || moving) { this.picture.render(this.scene, this.camera); this.dirty = false; }
     if (moving) requestAnimationFrame(this.tick); else { this.running = false; this.last = 0; }
   }
 
@@ -610,7 +672,7 @@ export class Bench {
     let best = null, bestT = Infinity;
     for (const p of this.rackHits || []) {
       if (p.row < this.rackRow - 0.5 || p.row >= this.rackRow + L.rackRows) continue;
-      const lo = [p.cx - CW / 2, -POCKET_DEEP, p.cz - CD / 2 + this.rackShift], hi = [p.cx + CW / 2, Math.max(0.02, p.top), p.cz + CD / 2 + this.rackShift];
+      const lo = [p.cx - CW / 2, 0, p.cz - CD / 2 + this.rackShift], hi = [p.cx + CW / 2, Math.max(0.02, p.top), p.cz + CD / 2 + this.rackShift];
       let t0 = 0, t1 = Infinity;
       for (let a = 0; a < 3; a++) {
         const oa = a === 0 ? o.x : a === 1 ? o.y : o.z, da = a === 0 ? d.x : a === 1 ? d.y : d.z;
@@ -697,9 +759,7 @@ export class Bench {
       this.view = null;
       const n = Math.min(4, uids.length);
       for (let i = 0; i < n; i++) {
-        const top = new THREE.MeshStandardMaterial({ map: i === n - 1 ? this.face(u.item.s, u.item.label) : null, color: i === n - 1 ? 0xffffff : hex(this.dark ? NIGHT.plate : COL.putty), roughness: 0.85 });
-        const edge = new THREE.MeshStandardMaterial({ color: hex(edgeColour(u.item.s)), roughness: 0.7 });
-        const m = new THREE.Mesh(this.chipGeo, [edge, edge, top, this.mat.under, edge, edge]);
+        const m = new THREE.Mesh(this.chipGeo, another(this.mat.chip, { map: i === n - 1 ? this.face(u.item.s, u.item.label) : null, edge: edgeColour(u.item.s), number: numberOf(u.uid) + i }));
         m.position.set(i * 0.05, i * (CT + 0.012), i * -0.04); m.castShadow = true; m.userData = { mat: true };
         this.held.add(m);
       }
@@ -709,7 +769,8 @@ export class Bench {
       this.drag = { kind: 'pile', key: u.key, on: true, at: this.ground(e, 1) };
       const heats = (u.pile && u.pile.heats ? u.pile.heats : []).slice(0, 14);
       heats.forEach((b, i) => {
-        const m = new THREE.Mesh(this.chipGeo, new THREE.MeshStandardMaterial({ color: hex(b < 0 ? EDGE_NONE : heat(b)), roughness: 0.75 }));
+        const tint = b < 0 ? EDGE_NONE : heat(b);
+        const m = new THREE.Mesh(this.chipGeo, another(this.mat.mini, { colour: i === 0 ? this.P.plate : tint, edge: tint, rough: i === 0 ? this.P.plateRough : 0.62 }));
         m.scale.set(0.5, 1, 0.5); m.position.y = (heats.length - 1 - i) * CT * 1.02; m.castShadow = true; m.userData = { mat: true };
         this.held.add(m);
       });
@@ -755,10 +816,10 @@ export class Bench {
     const h = (this.rackHits || []).find((p) => p.key === key);
     if (h) return this.screenOf(h.cx, onPlate ? 0 : Math.max(0, h.top), (onPlate ? h.z1 - 0.45 : h.cz) + this.rackShift);
     const t = (this.trayHits || []).find((p) => p.key === key && (p.stack || p.bay));
-    return t ? this.screenOf(t.cx, TRAY_TOP, t.cz) : null;
+    return t ? this.screenOf(t.cx, PLATE, t.cz) : null;
   }
-  whereBay(slot) { const t = (this.trayHits || []).find((p) => p.bay === slot); return t ? this.screenOf(t.cx, TRAY_TOP, t.cz) : null; }
-  whereTray() { const t = (this.trayHits || []).find((p) => p.pockets); return this.screenOf(t.cx, TRAY_TOP, t.cz); }
+  whereBay(slot) { const t = (this.trayHits || []).find((p) => p.bay === slot); return t ? this.screenOf(t.cx, PLATE, t.cz) : null; }
+  whereTray() { const t = (this.trayHits || []).find((p) => p.pockets); return this.screenOf(t.cx, PLATE, t.cz); }
   wholeRows() { return this.L.wholeRows; }
   columns() { return this.L.cols; }
 }

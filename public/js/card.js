@@ -44,25 +44,29 @@ export function drawCard(canvas, s, index, flags = {}) {
   paintCard(g, s, index, flags);
 }
 
-// A chip's face for the bench: the same card on a canvas of its own, `scale` pixels to the card's one.
+// A chip's face for the bench: the card's print alone on a canvas of its own, `scale` pixels to
+// the card's one, clear wherever nothing is printed (the chip itself is the card's ground: a plate,
+// with a plate's own wear showing between the print).
 export function faceCanvas(s, index, scale = 2) {
   const canvas = document.createElement('canvas');
   canvas.width = Math.round(CARD_W * scale); canvas.height = Math.round(CARD_H * scale);
   const g = canvas.getContext('2d');
   g.setTransform(scale, 0, 0, scale, 0, 0);
-  paintCard(g, s, index);
+  paintCard(g, s, index, { bare: true });
   return canvas;
 }
 
 // The card itself, on any context already scaled so that it is CARD_W by CARD_H. index: its
 // number where it lies (0 the first), or a string to print in the number's place, or null for none.
-export function paintCard(g, s, index, { selected = false, playing = false, marked = false } = {}) {
+export function paintCard(g, s, index, { selected = false, playing = false, marked = false, bare = false } = {}) {
   g.textBaseline = 'middle';
   const c = ink();
 
-  g.fillStyle = selected && night ? c.mark : c.frame; g.fillRect(0, 0, CARD_W, CARD_H);
-  const inset = selected ? 4 : 1;
-  g.fillStyle = c.ground; g.fillRect(inset, inset, CARD_W - 2 * inset, CARD_H - 2 * inset);
+  if (!bare) {
+    g.fillStyle = selected && night ? c.mark : c.frame; g.fillRect(0, 0, CARD_W, CARD_H);
+    const inset = selected ? 4 : 1;
+    g.fillStyle = c.ground; g.fillRect(inset, inset, CARD_W - 2 * inset, CARD_H - 2 * inset);
+  }
 
   const x0 = 6, y0 = 6;
   g.font = LEGEND;
