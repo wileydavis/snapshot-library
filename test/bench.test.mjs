@@ -289,6 +289,24 @@ part('a knob is a module with its two knobs: DEPTH turned by hand is kept, TURN 
 }
 part('KNOB MACRO makes a knob macro of what differs between two chips: its moves are plates, set and taken off, and LOAD is given them');
 
+// 12d. chips dropped on the chassis itself, under its knobs: those and no others go to SF-000 at LOAD, in one stack kept for that
+{
+  await pile('all');
+  const had = (await get('/api/load')).stacks.map((x) => x.id);
+  const first = (await state()).shown[2], second = (await state()).shown[7];
+  await drag(await where('whereChip', 2), await where('whereTray'));
+  let send = (await state()).stacks.find((x) => x.name === 'TO SF-000');
+  assert.ok(send && send.n === 1 && send.load, 'a chip dropped on the chassis is in a stack called TO SF-000, which loads');
+  await drag(await where('whereChip', 7), await where('whereTray'));
+  send = (await state()).stacks.find((x) => x.name === 'TO SF-000');
+  assert.equal(send.n, 2, 'a second chip joins it: there is one such stack');
+  const tray = await get('/api/load');
+  const got = tray.stacks.find((x) => x.id === send.id);
+  assert.deepEqual([...got.uids].sort(), [first, second].sort(), 'LOAD is given those two');
+  assert.deepEqual(tray.stacks.map((x) => x.id).filter((id) => id !== send.id), had, 'and nothing else that was not on the chassis already');
+}
+part('chips dropped on the chassis go to SF-000 at LOAD, and nothing else of the library does');
+
 // 10. a mood from examples
 await pile('mood:bright');
 for (const i of [0, 1, 2, 4]) await click(await where('whereChip', i), { shift: true });

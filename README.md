@@ -52,6 +52,7 @@ straight way, without the glow.
 | Drag a chip along the table | put the open stack in order (a stack of your own, with ORDER on AS IT IS STACKED) |
 | **Backspace**, or TAKE OUT | take the chosen chip out of the open stack. It stays in the library |
 | Drag a stack by its pocket onto the chassis, under its knobs | SF-000 takes it at LOAD (the key beside SET UP on its library screen). Dragged out again, it is gone from the instrument at the next LOAD; its chips stay there. TO SF-000 on the bar does the same |
+| Drag a chip onto the chassis, under its knobs | SF-000 takes that chip at LOAD (it goes into a stack called TO SF-000, kept for this). **LOAD brings only what is on the chassis**, never the rest of the library |
 | Drag a chip onto a pocket of the chassis | a **cue stack** on that knob (or one more chip in what the knob holds). In SF-000 the knob steps through the stack: a turn cues a chip, a press morphs to it |
 | Drag a stack or a macro onto a pocket of the chassis | put it on that knob: a macro sweeps, a stack steps. KNOB on the bar does the same. From pocket to pocket moves it; out of the chassis takes it off |
 | Drag up or down on a module's knob | turn it: DEPTH sets how far a macro goes; TURN plays each chip it comes to |

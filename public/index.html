@@ -17,7 +17,7 @@
     <!-- the open stack: what is dealt out on the table -->
     <label class="field name"><span id="s-kind">STACK</span><input id="s-name" type="text" autocomplete="off" spellcheck="false" aria-label="The open stack's name"></label>
     <span id="s-count" class="plate white">0</span>
-    <button id="s-load" class="key" aria-pressed="false" title="Put this stack in the tray: SF-000 takes it at LOAD"><i></i><span>TO SF-000</span></button>
+    <button id="s-load" class="key" aria-pressed="false" title="Put this stack on the chassis: SF-000 takes it at LOAD"><i></i><span>TO SF-000</span></button>
     <label class="field small" id="s-knob-field" hidden><span>KNOB</span>
       <select id="s-knob" aria-label="The snapshot knob this macro goes on"></select>
     </label>
@@ -43,7 +43,7 @@
   </header>
 
   <main class="stage">
-    <canvas id="bench" aria-label="The bench: stacks of snapshots in pockets, the open stack dealt out, and the tray SF-000 loads"></canvas>
+    <canvas id="bench" aria-label="The bench: stacks of snapshots, the open stack dealt out, and the chassis: what SF-000 loads"></canvas>
     <!-- the rack's rows, when there are more than show: beside the lip they slide under -->
     <div id="rows" class="rows" hidden>
       <button id="rows-up" class="key" title="The rows of stacks before these"><i></i><span>&#9650;</span></button>

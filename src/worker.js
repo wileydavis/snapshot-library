@@ -417,7 +417,7 @@ export function stackFields(body, kindNow = 'stack') {
   else if (body.rule && typeof body.rule === 'object') { const t = JSON.stringify(body.rule); if (t.length <= 8000) f.rule = t; }
   if (Array.isArray(body.items)) f.items = JSON.stringify(cleanItems(body.items, kind));
   if (body.depth === null) f.depth = null;
-  else if (typeof body.depth === 'number' && Number.isFinite(body.depth)) f.depth = Math.max(0, Math.min(1, body.depth));
+  else if (typeof body.depth === 'number' && Number.isFinite(body.depth)) f.depth = Math.max(0, Math.min(2, body.depth));      // (0 to 1 from the page; SF-000's own DEPTH goes to 2, and a knob sent up from it comes back as it was)
   if (body.slot === null) f.slot = null;
   else if (Number.isInteger(body.slot) && body.slot >= 1 && body.slot <= 16) f.slot = body.slot;
   if (typeof body.load === 'boolean') f.load = body.load ? 1 : 0;
