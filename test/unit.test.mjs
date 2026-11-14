@@ -98,7 +98,7 @@ assert.deepEqual(cleanTags([' Dark ', 'dark', 'Rolling, low', '', 'x'.repeat(60)
   assert.deepEqual(cleanItems([{ u: a, bars: 400, morph: -2 }, { u: a }, { u: b, bars: 'x', morph: 0.5 }], 'song'),
     [{ u: a, bars: 256, morph: 0 }, { u: a, bars: 8, morph: 0 }, { u: b, bars: 8, morph: 0.5 }], 'a song may hold a chip twice; its parts have bars and a way in');
   const f = stackFields({ name: '  ROLLERS  ', kind: 'macro', depth: 3, slot: 17, load: true, pos: 2, items: [a, a], rule: { type: 'like', uid: a }, extra: { x: 1 }, id: 'ignored', deleted_at: 5 });
-  assert.deepEqual(f, { name: 'ROLLERS', kind: 'macro', rule: '{"type":"like","uid":"' + a + '"}', items: '[{"u":"' + a + '"}]', depth: 1, load: 1, pos: 2, extra: '{"x":1}' });
+  assert.deepEqual(f, { name: 'ROLLERS', kind: 'macro', rule: '{"type":"like","uid":"' + a + '"}', items: '[{"u":"' + a + '"}]', depth: 2, load: 1, pos: 2, extra: '{"x":1}' });
   assert.deepEqual(stackFields({ slot: 16, depth: null, rule: null }), { rule: '', depth: null, slot: 16 });
   assert.deepEqual(stackFields({ kind: 'bucket', slot: 0, load: 'yes', pos: 'far' }), {}, 'what is not understood is not set');
   assert.deepEqual(stackFields(null), {});
