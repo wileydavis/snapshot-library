@@ -176,10 +176,19 @@ assert.deepEqual(mineOnly(tray.stacks).map((x) => [x.id, x.name, x.kind, x.uids]
   ['testsong0001', 'FRIDAY', 'song', [u[0], u[9], u[0]]],
 ], 'the stacks in the tray, in order, without the chip that has gone; the rule stack was not put in it');
 assert.deepEqual(mineOnly(tray.stacks)[1].parts, [{ uid: u[0], bars: 16, morph: 0 }, { uid: u[9], bars: 32, morph: 4 }, { uid: u[0], bars: 8, morph: 0.5 }]);
-assert.deepEqual(mineOnly(tray.knobs).map((x) => [x.id, x.slot, x.name, x.depth, x.uids]), [
-  ['testmacro001', 5, 'LIFT', 0.8, [u[4], u[5], u[6]]],
-  ['testmacro002', 3, 'DROP', null, [u[7], u[8]]],
+assert.deepEqual(mineOnly(tray.knobs).map((x) => [x.id, x.slot, x.kind, x.name, x.depth, x.uids]), [
+  ['testmacro001', 5, 'macro', 'LIFT', 0.8, [u[4], u[5], u[6]]],
+  ['testmacro002', 3, 'macro', 'DROP', null, [u[7], u[8]]],
 ], 'a macro is in the tray when it has a knob');
+// a stack on a knob is a cue stack: on its knob, and among the stacks whether or not it was marked for the tray
+await j('/api/stacks/testrule0001', 'PATCH', { slot: 9 });
+tray = await (await j('/api/load')).json();
+assert.deepEqual(mineOnly(tray.knobs).filter((x) => x.kind === 'stack').map((x) => [x.id, x.slot, x.depth, x.uids]), [['testrule0001', 9, null, [u[0], u[10], u[11]]]]);
+assert.ok(mineOnly(tray.stacks).some((x) => x.id === 'testrule0001' && x.kind === 'stack'), 'and it is among the stacks');
+await j('/api/stacks/testmacro002', 'PATCH', { slot: 9 });
+assert.equal((await (await j('/api/stacks/testrule0001')).json()).slot, null, 'a knob holds one thing: the stack gave it up to the macro put there');
+await j('/api/stacks/testmacro002', 'PATCH', { slot: 3 });
+tray = await (await j('/api/load')).json();
 assert.deepEqual(tray.chips[u[0]], { name: many[0].name, clip: true, tags: ['set a', 'dark'], at: tray.chips[u[0]].at });
 assert.equal(tray.chips[u[2]].clip, false);
 assert.ok(!tray.chips[u[3]] && !tray.chips[u[10]], 'only the chips the tray holds');

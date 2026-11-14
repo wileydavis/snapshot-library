@@ -27,8 +27,8 @@ sound, through amber and yellow, to white), so the side of a pile shows what is 
 | Drag a chip along the table | put the open stack in order (a stack of your own, with ORDER on AS IT IS STACKED) |
 | **Backspace**, or TAKE OUT | take the chosen chip out of the open stack. It stays in the library |
 | Drag a stack by its pocket into the tray | SF-000 takes it at LOAD (the key beside SET UP on its library screen). Dragged out again, it is gone from the instrument at the next LOAD; its chips stay there. TO SF-000 on the bar does the same |
-| Drag a chip onto a knob bay | add it to that knob's macro, or make one there |
-| Drag a macro from its bay to another | move it to that knob |
+| Drag a chip onto a knob bay | a **cue stack** on that knob (or one more chip in what the knob holds). In SF-000 the knob steps through the stack: a turn cues a chip, a press morphs to it |
+| Drag a stack or a macro by its pocket onto a knob bay | put it on that knob: a macro sweeps, a stack steps. KNOB on the bar does the same. From bay to bay moves it; out of the tray takes it off |
 | The wheel | over the table, moves through the open stack; over the rack, turns its rows |
 | **/** | FIND, in what is dealt: names, tags, notes, effects |
 | **D** | the dark library, as the dark instrument. It starts as your computer is set, and stays as you leave it |
@@ -43,8 +43,11 @@ seven measures, and what can be made from it. The foot is for the marked.
 - **ALL**, **UNSORTED** (in no stack of your making yet) and **RECENT** are always there.
 - **Your stacks** come next: made with + NEW STACK, STACK THEM (the marked), or KEEP on anything
   that is out. REMOVE STACK, pressed twice, takes a stack away and leaves its chips.
-- **A macro** is a stack with a job: the chips a snapshot knob sweeps through, in the order they
-  lie, with a DEPTH. MACRO makes one of the marked. Give it a knob on the bar, or drag it to a bay.
+- **A macro** is made on purpose: the chips a snapshot knob sweeps through, in the order they
+  lie, with a DEPTH. MACRO makes one of the marked chips, KNOB FROM THIS one from a chip's
+  family. Give it a knob on the bar, or drag it to a bay. Its bay's number is on teal.
+- **A cue stack** is any stack on a knob (its bay's number is on amber): a curated list the knob
+  steps through. It is among the instrument's stacks as well.
 - **A song** is parts in a line: each a chip, how many BARS it lasts and how long the WAY IN takes.
   In the tray it loads as an arrangement.
 - **Moods** (DEEP, DUB, DRIVING, HYPNOTIC, PEAK, SPARSE, DARK, BRIGHT, HEAVY, RESTLESS, WARM-UP)
@@ -154,7 +157,7 @@ snapshot's own id.
 | `GET /api/stacks` | Every stack, in the order they stand. `?removed=1`: the removed ones. |
 | `POST /api/stacks` | `{ "id"?, "name", "kind": "stack" \| "macro" \| "song" \| "rule", "items": [uid or { "u": uid, "bars", "morph" }], "rule"?, "depth"?, "slot"?, "load"? }`. With an `id` (8 to 24 letters and digits), making it twice is one stack. |
 | `GET /api/stacks/<id>`, `PATCH`, `DELETE` | One stack; any of those fields changed (`items` is the whole list, in order); removed (kept, and put back with `PATCH { "restore": true }`). A knob holds one macro: giving a macro a `slot` takes it from the one that had it. |
-| `GET /api/load` | **What SF-000 takes at LOAD**: `{ "stacks": [ { id, name, kind, uids, parts? } ], "knobs": [ { id, slot, name, depth, uids } ], "chips": { "<uid>": { name, clip, tags } } }`. The stacks in the tray, the macros that have a knob, each with the chips it holds now (a stack that fills itself: what it held when the page last looked). |
+| `GET /api/load` | **What SF-000 takes at LOAD**: `{ "stacks": [ { id, name, kind, uids, parts? } ], "knobs": [ { id, slot, kind, name, depth, uids } ], "chips": { "<uid>": { name, clip, tags } } }`. The stacks in the tray and what is on each knob (`kind` "macro": the knob sweeps; "stack": it steps, a cue stack, and is among the stacks too), each with the chips it holds now (a stack that fills itself: what it held when the page last looked). |
 | `GET /api/stats` | Counts. |
 
 ## Local development

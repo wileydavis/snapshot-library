@@ -72,7 +72,8 @@ function pileList() {
   });
 }
 const pileOf = (key) => pileList().find((p) => p.key === key) || null;
-const inTray = (s) => (s.kind === 'macro' ? !!s.slot : !!s.load);
+// In the tray: on one of its knobs (a macro, which sweeps, or a stack, which steps: a cue stack), or a stack marked for it.
+const inTray = (s) => !!s.slot || (s.kind !== 'macro' && !!s.load);
 const heatsOf = (items) => items.slice(0, 4000).map((it) => { const s = chip(it.u); return s && s.p ? s.p.bright : -1; });
 
 // ---------------------------------------------------------------- drawing: the rack, the tray, the table, the strips
@@ -87,10 +88,10 @@ function showRack() {
   }
   bench.setRack(piles);
   const bays = Array.from({ length: 16 }, (_, i) => {
-    const s = state.stacks.find((x) => x.kind === 'macro' && x.slot === i + 1);
-    return s ? { key: `st:${s.id}`, name: s.name, heats: heatsOf(itemsOf(s)), open: !!state.open && state.open.key === `st:${s.id}` } : { key: null, name: '' };
+    const s = state.stacks.find((x) => x.slot === i + 1);
+    return s ? { key: `st:${s.id}`, name: s.name, sweeps: s.kind === 'macro', heats: heatsOf(itemsOf(s)), open: !!state.open && state.open.key === `st:${s.id}` } : { key: null, name: '' };
   });
-  const loaded = state.stacks.filter((s) => s.kind !== 'macro' && s.load).map((s) => ({ key: `st:${s.id}`, name: s.name || 'UNNAMED', count: itemsOf(s).length, heats: heatsOf(itemsOf(s)), open: !!state.open && state.open.key === `st:${s.id}` }));
+  const loaded = state.stacks.filter((s) => s.kind !== 'macro' && inTray(s)).map((s) => ({ key: `st:${s.id}`, name: s.name || 'UNNAMED', count: itemsOf(s).length, heats: heatsOf(itemsOf(s)), open: !!state.open && state.open.key === `st:${s.id}` }));
   bench.setTray({ bays, stacks: loaded });
 }
 
@@ -173,11 +174,12 @@ function showBar() {
   const load = $('s-load');
   load.hidden = !!(s && s.kind === 'macro');
   load.disabled = !s;
-  load.setAttribute('aria-pressed', String(!!s && !!s.load));
+  load.setAttribute('aria-pressed', String(!!s && inTray(s)));
   const macro = (s && s.kind === 'macro') || (o && o.temp && o.kind === 'macro');
-  $('s-knob-field').hidden = !(s && s.kind === 'macro'); $('s-depth-field').hidden = !(s && s.kind === 'macro');
+  // (a knob holds a macro or a stack: a stack on a knob is a cue stack. DEPTH is a macro's.)
+  $('s-knob-field').hidden = !(s && s.kind !== 'song'); $('s-depth-field').hidden = !(s && s.kind === 'macro');
+  if (s && s.kind !== 'song') $('s-knob').value = String(s.slot || 0);
   if (s && s.kind === 'macro') {
-    $('s-knob').value = String(s.slot || 0);
     if (document.activeElement !== $('s-depth')) $('s-depth').value = s.depth === null || s.depth === undefined ? '' : String(Math.round(s.depth * 100));
   }
   // KEEP: what is out and not a stack of its own becomes one. FREEZE: a stack that fills itself stops.
@@ -473,7 +475,7 @@ function canDrop(d, to) {
   }
   // a whole pile: into the tray, onto a knob, or (from the tray) out of it
   const s = stackOf(d.key), mood = d.key.startsWith('mood:');
-  if (to.type === 'bay') return !!s && s.kind === 'macro';
+  if (to.type === 'bay') return !!s && s.kind !== 'song';              // (a macro, or a stack: on a knob it is a cue stack)
   if (to.type === 'tray' || (to.type === 'pile' && to.inTray)) return (!!s && s.kind !== 'macro') || mood;
   return !!s && inTray(s);                                    // dropped anywhere else: out of the tray
 }
@@ -489,16 +491,17 @@ function drop(d, to) {
     else if (to.type === 'bay') {
       const s = stackOf(to.key);
       if (s) addTo(s, uids);
-      else makeStack({ name: `KNOB ${to.slot}`, kind: 'macro', items: uids, slot: to.slot, depth: 1 }, `A MACRO ON KNOB ${to.slot}. DRAG MORE CHIPS ONTO IT; THE ORDER THEY LIE IN IS THE SWEEP.`, { open: false });
+      // (chips on a knob are a cue stack: the knob steps through them. A macro is made on purpose, with MACRO or KNOB FROM THIS, and put on a knob.)
+      else makeStack({ name: `CUE ${to.slot}`, kind: 'stack', items: uids, slot: to.slot }, `A CUE STACK ON KNOB ${to.slot}: IN SF-000 THE KNOB STEPS THROUGH THESE, A TURN CUES ONE, A PRESS MORPHS TO IT. DRAG MORE ONTO IT.`, { open: false });
     }
     return;
   }
   const s = stackOf(d.key);
   // (a macro still called by its knob's number takes its new knob's)
-  if (to.type === 'bay' && s) patchStack(s, { slot: to.slot, ...(/^KNOB \d+$/.test(s.name) ? { name: `KNOB ${to.slot}` } : {}) }, `${up(s.name)} IS ON KNOB ${to.slot}.`);
+  if (to.type === 'bay' && s) patchStack(s, { slot: to.slot, ...(/^(KNOB|CUE) \d+$/.test(s.name) ? { name: `${s.name.split(' ')[0]} ${to.slot}` } : {}) }, `${up(s.name)} IS ON KNOB ${to.slot}${s.kind === 'macro' ? ': IT SWEEPS' : ': A CUE STACK, IT STEPS'}.`);
   else if ((to.type === 'tray' || to.type === 'pile') && d.key.startsWith('mood:')) { const p = pileOf(d.key); makeStack({ name: p.name, kind: 'rule', rule: p.rule, items: p.items, load: true }, `${p.name} IS IN THE TRAY, AS A STACK THAT FILLS ITSELF.`, { open: false }); }
   else if ((to.type === 'tray' || (to.type === 'pile' && to.inTray)) && s) patchStack(s, { load: true }, `${up(s.name)} IS IN THE TRAY: SF-000 TAKES IT AT LOAD.`);
-  else if (s && inTray(s)) patchStack(s, s.kind === 'macro' ? { slot: null } : { load: false }, `${up(s.name)} IS OUT OF THE TRAY.`);
+  else if (s && inTray(s)) patchStack(s, s.kind === 'macro' ? { slot: null } : { load: false, slot: null }, `${up(s.name)} IS OUT OF THE TRAY.`);
 }
 
 // ---------------------------------------------------------------- light or dark (D, as on the instrument)
@@ -528,11 +531,11 @@ function wire() {
     if (!o || !name) return;
     if (o.stack) patchStack(o.stack, { name }, `IT IS ${name} NOW.`); else if (o.temp) { o.name = name; showRack(); }
   });
-  $('s-load').addEventListener('click', () => { const s = state.open && state.open.stack; if (s) patchStack(s, { load: !s.load }, s.load ? `${up(s.name)} IS OUT OF THE TRAY.` : `${up(s.name)} IS IN THE TRAY: SF-000 TAKES IT AT LOAD.`); });
+  $('s-load').addEventListener('click', () => { const s = state.open && state.open.stack; if (s) patchStack(s, inTray(s) ? { load: false, slot: null } : { load: true }, inTray(s) ? `${up(s.name)} IS OUT OF THE TRAY.` : `${up(s.name)} IS IN THE TRAY: SF-000 TAKES IT AT LOAD.`); });
   const knobs = $('s-knob');
   knobs.append(new Option('NONE', '0'));
   for (let i = 1; i <= 16; i++) knobs.append(new Option(String(i), String(i)));
-  knobs.addEventListener('change', () => { const s = state.open && state.open.stack; if (s) { const slot = Number(knobs.value) || null; patchStack(s, { slot }, slot ? `${up(s.name)} IS ON KNOB ${slot}.` : `${up(s.name)} IS ON NO KNOB.`); } });
+  knobs.addEventListener('change', () => { const s = state.open && state.open.stack; if (s) { const slot = Number(knobs.value) || null; patchStack(s, { slot }, slot ? `${up(s.name)} IS ON KNOB ${slot}${s.kind === 'macro' ? ': IT SWEEPS' : ': A CUE STACK, IT STEPS'}.` : `${up(s.name)} IS ON NO KNOB.`); } });
   $('s-depth').addEventListener('change', () => { const s = state.open && state.open.stack; if (s) patchStack(s, { depth: Math.max(0, Math.min(100, Number($('s-depth').value) || 0)) / 100 }, 'DEPTH KEPT.'); });
   $('s-keep').addEventListener('click', keepOpen);
   $('s-freeze').addEventListener('click', freezeOpen);
@@ -578,7 +581,7 @@ function startBench() {
     bench = new Bench($('bench'), {
       chip: (uid, index, { shift }) => { const d = state.shown[index]; if (shift) toggleMark(uid); else press(uid, d ? d.n : 0); },
       pile: (key) => openPile(key),
-      bay: (slot, key) => { if (key) openPile(key); else say(`KNOB ${slot} HOLDS NOTHING. DRAG CHIPS ONTO IT TO MAKE ITS MACRO.`); },
+      bay: (slot, key) => { if (key) openPile(key); else say(`KNOB ${slot} HOLDS NOTHING. DRAG CHIPS ONTO IT FOR A CUE STACK, OR A MACRO ONTO IT.`); },
       dragSet: (uid) => (state.marked.has(uid) ? markedInOrder() : [uid]),
       rows: ({ first, shown, rows, y }) => {
         const more = rows > shown;
@@ -591,7 +594,7 @@ function startBench() {
       canDrop, drop, orders,
       over: (d, to) => {
         if (!d) return;
-        if (!to) { say(d.kind === 'chips' ? 'DROP ON A STACK, A KNOB OF THE TRAY, OR + NEW STACK.' : 'DROP IN THE TRAY TO LOAD IT, ON A KNOB IF IT IS A MACRO.'); return; }
+        if (!to) { say(d.kind === 'chips' ? 'DROP ON A STACK, A KNOB OF THE TRAY, OR + NEW STACK.' : 'DROP IN THE TRAY TO LOAD IT, OR ON A KNOB: A MACRO SWEEPS, A STACK STEPS.'); return; }
         const s = to.type === 'pile' ? stackOf(to.key) : null;
         say(to.type === 'bay' ? `ON KNOB ${to.slot}` : to.type === 'table' ? 'HERE' : to.type === 'tray' ? 'INTO THE TRAY' : s ? `INTO ${up(s.name)}` : to.key === 'new' ? 'A NEW STACK' : '');
       },

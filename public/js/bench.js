@@ -21,6 +21,7 @@ const TILT = (57 * Math.PI) / 180, FOV = 26;
 const MIN_CHIP_PX = 236;
 
 const hex = (c) => new THREE.Color(c);
+const TEAL = '#4490A1';                                                // a sweeping knob's light on the instrument
 const EDGE_NONE = '#9A9B96';                                           // a chip with no sound kept
 const edgeColour = (s) => (s && s.p ? heat(s.p.bright) : EDGE_NONE);
 const clamp = (x, lo, hi) => Math.min(hi, Math.max(lo, x));
@@ -385,8 +386,9 @@ export class Bench {
       const tex = plateTexture((g, w, h) => {
         const D = this.dark;
         g.fillStyle = bay.open ? COL.yellow : bay.key ? (D ? NIGHT.paper : COL.white) : D ? NIGHT.plate2 : COL.grey; g.fillRect(0, 0, w, h);
-        g.fillStyle = D ? NIGHT.badge : COL.black; g.fillRect(0, 0, 52, h);
-        g.textBaseline = 'middle'; g.textAlign = 'center'; g.fillStyle = D && !bay.key ? NIGHT.dim : COL.lit; g.font = LEGEND(40);
+        // its number: on teal where the knob holds a macro (it sweeps), on amber where it holds a stack (it steps), as the instrument lights them
+        g.fillStyle = bay.key ? (bay.sweeps ? TEAL : COL.amber) : D ? NIGHT.badge : COL.black; g.fillRect(0, 0, 52, h);
+        g.textBaseline = 'middle'; g.textAlign = 'center'; g.fillStyle = bay.key ? COL.black : D ? NIGHT.dim : COL.lit; g.font = LEGEND(40);
         g.fillText(String(i + 1), 26, h / 2 + 2);
         g.textAlign = 'left'; g.fillStyle = D && !bay.open ? NIGHT.ink : COL.black; g.font = LEGEND(36); g.letterSpacing = '1px';
         g.fillText(fitText(g, String(bay.name || '').toUpperCase(), w - 64), 60, h / 2 + 2);

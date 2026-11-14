@@ -203,21 +203,32 @@ assert.equal((await stack(macroId)).slot, 4);
 await type('s-depth', '70');
 assert.equal((await stack(macroId)).depth, 0.7);
 await pile('all');
+// chips dropped on an empty knob are a cue stack on it (the knob will step through them); more dropped there join it
 const onto7 = (await state()).shown[9];
 await drag(await where('whereChip', 9), await where('whereBay', 7));
 st = await state();
 const seven = st.stacks.find((x) => x.slot === 7);
-assert.ok(seven && seven.kind === 'macro' && seven.n === 1, 'a chip dropped on an empty knob makes its macro');
+assert.ok(seven && seven.kind === 'stack' && seven.n === 1, 'chips dropped on an empty knob make a cue stack there, not a macro');
+assert.equal(st.open.key, 'all', 'and what was being looked through stays out');
 await drag(await where('whereChip', 10), await where('whereBay', 7));
 assert.equal((await stack(seven.id)).items.length, 2);
 assert.equal((await stack(seven.id)).items[0].u, onto7);
 tray = await get('/api/load');
-assert.deepEqual(tray.knobs.map((k) => k.slot).sort((a, b) => a - b), [4, 7]);
+assert.deepEqual(tray.knobs.map((k) => [k.slot, k.kind]).sort((x, y) => x[0] - y[0]), [[4, 'macro'], [7, 'stack']], 'LOAD says which knob sweeps and which steps');
 assert.equal(tray.knobs.find((k) => k.slot === 4).depth, 0.7);
-await drag(await where('whereBay', 7), await where('whereBay', 12));               // (the macro on knob 7, dragged to knob 12)
-assert.equal((await stack(seven.id)).slot, 12, 'a macro dragged to another knob is on that knob');
+assert.ok(tray.stacks.some((x) => x.id === seven.id), 'a stack on a knob is among the instrument\'s stacks too');
+await drag(await where('whereBay', 7), await where('whereBay', 12));               // (the cue stack on knob 7, dragged to knob 12)
+assert.deepEqual([(await stack(seven.id)).slot, (await stack(seven.id)).name], [12, 'CUE 12'], 'dragged to another knob it is on that knob, and still called by its knob');
+// a stack made by hand goes on a knob the same way (by its pocket, or KNOB on the bar); a macro put where a stack is takes the knob
+await S((x) => window.sfLibrary.bench.revealPile(x), `st:${mine}`); await settle();
+await drag(await where('wherePile', `st:${mine}`, true), await where('whereBay', 2));
+assert.equal((await stack(mine)).slot, 2, 'a stack dragged onto a knob is a cue stack there');
+await pile(`st:${macroId}`);
+await page.select('#s-knob', '2'); await settle();
+assert.deepEqual([(await stack(macroId)).slot, (await stack(mine)).slot], [2, null], 'a knob holds one thing');
+await page.select('#s-knob', '4'); await settle();
 await shot('knobs');
-part('KNOB FROM THIS, a knob and a depth given, chips dropped on an empty knob, a macro moved between knobs');
+part('KNOB FROM THIS makes a macro and it is given a knob; chips dropped on a knob are a cue stack; stacks and macros move between knobs');
 
 // 10. a mood from examples
 await pile('mood:bright');

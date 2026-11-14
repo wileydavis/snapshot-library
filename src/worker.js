@@ -489,13 +489,15 @@ async function removeStack(env, id, forget) {
   return res.meta.changes ? json({ ok: true }) : json({ error: 'not found' }, 404);
 }
 
-// What SF-000 takes at LOAD: every stack in the tray with the chips it holds now, and the macros
-// that have a knob. Each chip is named with what the instrument needs to know before it asks for
+// What SF-000 takes at LOAD: every stack in the tray with the chips it holds now, and what is on
+// each knob: a macro (kind "macro": the knob sweeps through its chips) or a stack (kind "stack":
+// the knob steps through them, cueing each, and a press recalls). Each chip is named with what the instrument needs to know before it asks for
 // the snapshot itself (GET /api/snapshots/<uid>) and its clip: its name here, whether it has a clip.
 async function load(env) {
-  // (a macro is in the tray when it has a knob there: its bay; any other stack when it is marked for it)
+  // (in the tray: anything on one of its knobs, and any stack marked for it. A knob holds a macro,
+  // which sweeps through its chips, or a stack, which steps through them: a cue stack.)
   const { results } = await env.DB.prepare(
-    `SELECT ${STACK_COLUMNS} FROM stacks WHERE deleted_at IS NULL AND ((kind = 'macro' AND slot IS NOT NULL) OR (kind <> 'macro' AND load = 1)) ORDER BY pos, created_at, id`).all();
+    `SELECT ${STACK_COLUMNS} FROM stacks WHERE deleted_at IS NULL AND (slot IS NOT NULL OR (kind <> 'macro' AND load = 1)) ORDER BY pos, created_at, id`).all();
   const all = results.map(shapeStack);
   const uids = [...new Set(all.flatMap((s) => s.items.map((it) => it.u)))];
   const chips = {};
@@ -508,10 +510,8 @@ async function load(env) {
   const out = { load: 1, at: Date.now(), stacks: [], knobs: [], chips };
   for (const s of all) {
     const items = here(s);
-    if (s.kind === 'macro') {
-      if (s.slot && items.length) out.knobs.push({ id: s.id, slot: s.slot, name: s.name, depth: s.depth, uids: items.map((it) => it.u) });
-      continue;
-    }
+    if (s.slot && items.length) out.knobs.push({ id: s.id, slot: s.slot, kind: s.kind === 'macro' ? 'macro' : 'stack', name: s.name, depth: s.kind === 'macro' ? s.depth : null, uids: items.map((it) => it.u) });
+    if (s.kind === 'macro') continue;                                  // (a macro is a knob's and nothing else; a stack on a knob is among the stacks too)
     const st = { id: s.id, name: s.name, kind: s.kind === 'song' ? 'song' : 'stack', uids: items.map((it) => it.u) };
     if (s.kind === 'song') st.parts = items.map((it) => ({ uid: it.u, bars: it.bars || 8, morph: it.morph || 0 }));
     out.stacks.push(st);
@@ -527,7 +527,7 @@ async function stats(env) {
             COALESCE(SUM(clip_size), 0) + COALESCE(SUM(json_size), 0) AS bytes
      FROM snapshots WHERE deleted_at IS NULL`).first();
   const defs = await env.DB.prepare('SELECT COUNT(*) AS n FROM defs').first();
-  const st = await env.DB.prepare('SELECT COUNT(*) AS n, COALESCE(SUM(load), 0) AS loaded FROM stacks WHERE deleted_at IS NULL').first();
+  const st = await env.DB.prepare('SELECT COUNT(*) AS n, COALESCE(SUM(CASE WHEN load = 1 OR slot IS NOT NULL THEN 1 ELSE 0 END), 0) AS loaded FROM stacks WHERE deleted_at IS NULL').first();
   return json({ ...all, defs: defs.n, stacks: st.n, in_tray: st.loaded });
 }
 
