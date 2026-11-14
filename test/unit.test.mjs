@@ -1,6 +1,8 @@
 // The parts that need no server: node test/unit.test.mjs
 import assert from 'node:assert/strict';
-import { summarise, cleanTags, cleanItems, stackFields } from '../src/worker.js';
+import { summarise, cleanTags, cleanItems, stackFields, fitsPlace, tidyPlan, readStemsHead } from '../src/worker.js';
+import { readHead, stemKeys } from '../public/js/stems.js';
+import { keyRects, keyAt, partsOf } from '../public/js/card.js';
 import * as st from '../public/js/stacks.js';
 import { unpack, distance, heat, energyRow, brightCol } from '../public/js/profile.js';
 import { narrow } from '../public/js/narrow.js';
@@ -102,6 +104,49 @@ assert.deepEqual(cleanTags([' Dark ', 'dark', 'Rolling, low', '', 'x'.repeat(60)
   assert.deepEqual(stackFields({ slot: 16, depth: null, rule: null }), { rule: '', depth: null, slot: 16 });
   assert.deepEqual(stackFields({ kind: 'bucket', slot: 0, load: 'yes', pos: 'far' }), {}, 'what is not understood is not set');
   assert.deepEqual(stackFields(null), {});
+
+  // a chip of a stack keeps the parts of the rig it does not take; a song's part does not
+  assert.deepEqual(cleanItems([{ u: a, off: ['kick', 'kick', 'returns', 'Not A Key', 9, 'bass'] }, { u: b, off: [] }, { u: b, off: 'kick' }]), [{ u: a, off: ['kick', 'returns', 'bass'] }, { u: b }]);
+  assert.deepEqual(cleanItems([{ u: a, off: ['kick'], bars: 4 }], 'song'), [{ u: a, bars: 4, morph: 0 }]);
+
+  // the module's places: 1 to 4 take a macro knob (a knob's moves), 5 to 16 a stack of chips; a song or a rule stack none
+  const links = { links: [{ c: 'bass.cutoff', d: 0.4 }] };
+  const learn = { kind: 'learn', items: [], extra: links }, stack = { kind: 'stack', items: [{ u: a }], extra: null }, old = { kind: 'macro', items: [{ u: a }], extra: links };
+  assert.deepEqual([1, 4, 5, 16].map((n) => fitsPlace(learn, n)), [true, true, false, false]);
+  assert.deepEqual([1, 4, 5, 16].map((n) => fitsPlace(stack, n)), [false, false, true, true]);
+  assert.deepEqual([4, 5].map((n) => fitsPlace(old, n)), [false, true], 'a macro from before the two kinds is a stack if it has chips');
+  assert.equal(fitsPlace({ kind: 'macro', items: [], extra: links }, 2), true, 'and a macro knob if it has only moves');
+  assert.deepEqual([fitsPlace({ kind: 'song', items: [{ u: a }] }, 6), fitsPlace({ kind: 'rule', items: [{ u: a }] }, 6)], [false, false]);
+  // put right: what is in a place of its kind stays; the rest go to the first free place of their kind, in the order of
+  // the places they were in; one with no place left comes off (the rule SF-000 brings its own knobs over by)
+  const at = (id, slot, of) => ({ id, slot, ...of });
+  assert.deepEqual(tidyPlan([at('s1', 1, stack), at('s2', 2, old), at('k3', 3, learn), at('s6', 6, stack), at('k7', 7, learn), at('s9', 9, stack)]),
+    [['s1', 5], ['s2', 7], ['k7', 1]], 'stacks on 1 and 2 go to 5 and 7 (6 is taken); the macro knob on 7 goes to 1; those in place are left');
+  assert.deepEqual(tidyPlan([at('s5', 5, stack), at('k2', 2, learn)]), [], 'a module already right is not touched');
+  assert.deepEqual(tidyPlan([at('k5', 5, learn), at('k1', 1, learn), at('k2', 2, learn), at('k3', 3, learn), at('k4', 4, learn)]), [['k5', null]], 'no macro place left: it comes off the module');
+  assert.deepEqual(tidyPlan([at('song', 6, { kind: 'song', items: [{ u: a }] })]), [['song', null]]);
+
+  // a stems file: what it holds, and where each stem is in it (the worker's reading and the page's agree)
+  {
+    const enc = new TextEncoder(), k = enc.encode('KICKSTEM'), bz = enc.encode('BASS');
+    const head = enc.encode(`SF0STEMS1\n${JSON.stringify({ rate: 48000, bars: 4, stems: [{ key: 'kick', bytes: k.length }, { key: 'bass', bytes: bz.length }] })}\n`);
+    const file = new Uint8Array([...head, ...k, ...bz]).buffer;
+    const want = { rate: 48000, bars: 4, stems: [{ key: 'kick', at: head.length, bytes: k.length }, { key: 'bass', at: head.length + k.length, bytes: bz.length }] };
+    assert.deepEqual(readStemsHead(file), want);
+    assert.deepEqual(readHead(file), want);
+    assert.equal(readStemsHead(file.slice(0, file.byteLength - 1)), null, 'cut short: not taken');
+    assert.equal(readHead(enc.encode('RIFFsomething else').buffer), null);
+    assert.deepEqual([stemKeys('kick'), stemKeys('returns'), stemKeys('bus'), stemKeys('master')], [['kick'], ['dub', 'space'], ['bus'], []], 'the returns are two stems; the key has none');
+  }
+  // a chip's keys: one for each lane it has, then the returns, the drum bus and the key
+  {
+    const s = { lanes: ['kick', 'bass', 'lead'] }, rects = keyRects(s);
+    assert.deepEqual(rects.map((r) => r.key), ['kick', 'bass', 'lead', 'returns', 'bus', 'master']);
+    assert.equal(partsOf({}).length, 14, 'one that does not say its lanes has SF-000\'s eleven');
+    for (const r of rects) assert.equal(keyAt(s, r.x + r.w / 2, r.y + r.h / 2), r.key);
+    assert.equal(keyAt(s, rects[0].x + 4, 20), null, 'above the keys is the chip itself');
+    assert.equal(keyAt({ move: { c: 'x', d: 1 } }, rects[0].x + 4, rects[0].y + 4), null, 'a move has none');
+  }
 }
 // The rules that fill a stack.
 {

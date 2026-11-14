@@ -27,6 +27,19 @@ if (!(await get('/api/snapshots')).snapshots.some((s) => s.uid === want[0].uid))
   }
 }
 const stacksBefore = new Set((await get('/api/stacks')).stacks.map((s) => s.id));
+// (the two newest have their stems in the library, as SF-000's ONLINE sends them: a kick, a bass and the dub return, each the sample clip)
+const newest = (await get('/api/snapshots')).snapshots.slice(0, 2).map((s) => s.uid);
+{
+  const enc = new TextEncoder(), sound = new Uint8Array(clip), keys = ['kick', 'bass', 'dub'];
+  const head = enc.encode(`SF0STEMS1\n${JSON.stringify({ rate: 48000, bars: 4, stems: keys.map((key) => ({ key, bytes: sound.length })) })}\n`);
+  const file = new Uint8Array(head.length + keys.length * sound.length);
+  file.set(head, 0);
+  keys.forEach((_, i) => file.set(sound, head.length + i * sound.length));
+  for (const uid of newest) {
+    await fetch(`${BASE}/api/clips/${uid}`, { method: 'PUT', headers: { 'content-type': 'audio/ogg' }, body: clip });
+    assert.equal((await fetch(`${BASE}/api/stems/${uid}`, { method: 'PUT', headers: { 'content-type': 'application/octet-stream' }, body: file })).status, 200);
+  }
+}
 
 const browser = await puppeteer.launch({
   executablePath: process.env.CHROME || '/usr/bin/google-chrome', headless: 'new',
@@ -38,6 +51,7 @@ const errors = [];
 page.on('pageerror', (e) => errors.push(e.message));
 page.on('console', (m) => { if (m.type() === 'error' && !/favicon|404/.test(m.text())) errors.push(m.text()); });
 await page.goto(BASE + '/', { waitUntil: 'networkidle0', timeout: 60000 });
+await page.evaluate(() => { try { localStorage.removeItem('sf-library-build'); } catch { /* none */ } });
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 // (things fly to their places, and what was asked of the server comes back: wait until the bench is still)
@@ -47,7 +61,8 @@ const state = () => S(() => {
   const s = window.sfLibrary.state;
   return { n: s.all.length, open: s.open && { key: s.open.key, name: s.open.name, kind: s.open.kind, temp: !!s.open.temp, items: s.open.items.map((it) => it.u) },
            shown: s.shown.map((d) => d.uid), selected: s.selected, playing: s.playing, marked: [...s.marked], stacks: s.stacks.map((x) => ({ id: x.id, name: x.name, kind: x.kind, load: x.load, slot: x.slot, n: x.items.length })),
-           sorted: s.sorted ? s.sorted.length : 0, made: window.sfLibrary.bench.items.size, status: document.getElementById('status').textContent };
+           sorted: s.sorted ? s.sorted.length : 0, made: window.sfLibrary.bench.items.size, status: document.getElementById('status').textContent,
+           build: s.build, off: Object.fromEntries(s.off), where: s.where };
 });
 const where = (what, ...args) => S((w, a) => window.sfLibrary.bench[w](...a), what, args);
 const click = async (p, opts = {}) => { await page.mouse.move(p.x, p.y); if (opts.shift) await page.keyboard.down('Shift'); await page.mouse.down(); await page.mouse.up(); if (opts.shift) await page.keyboard.up('Shift'); await settle(); };
@@ -189,7 +204,8 @@ assert.deepEqual([sent.kind, sent.parts.length, sent.parts[3].bars], ['song', 8,
 await shot('song');
 part('SONG FROM THIS, kept as a song, a part\'s bars set, and loaded as parts');
 
-// 9. KNOB FROM THIS: a macro, calm to full; it is given a knob; chips dropped on an empty knob make another
+// 9. KNOB FROM THIS: a stack knob from a chip's family, calm to full. Kept, it is in the column; ADD TO MODULE gives it the
+// first free stack knob. The module's places 1 to 4 take macro knobs and 5 to 16 stack knobs, and each refuses the other.
 await pile('all');
 await click(await where('whereChip', 2));
 await key('knob');
@@ -197,62 +213,60 @@ st = await state();
 assert.equal(st.open.kind, 'macro');
 assert.ok(st.open.items.length >= 2 && st.open.items.length <= 3);
 await key('s-keep');
-const macroId = (await state()).open.key.slice(3);
-await page.select('#s-knob', '4'); await settle();
-assert.equal((await stack(macroId)).slot, 4);
-await type('s-depth', '70');
-assert.equal((await stack(macroId)).depth, 0.7);
+st = await state();
+const knobId = st.open.key.slice(3);
+assert.deepEqual([(await stack(knobId)).kind, st.build], ['stack', knobId], 'kept, it is a stack of chips, and it is in the column');
+await key('b-add');
+assert.equal((await stack(knobId)).slot, 5, 'ADD TO MODULE: the first free stack knob');
+await page.select('#s-knob', '2'); await settle();
+assert.equal((await stack(knobId)).slot, 5, 'a stack is refused a macro knob\'s place');
+assert.match((await state()).status, /PLACES 1 TO 4 TAKE MACRO KNOBS/);
+await page.select('#s-knob', '8'); await settle();
+assert.equal((await stack(knobId)).slot, 8);
 await pile('all');
-// chips dropped on an empty knob are a cue stack on it (the knob will step through them); more dropped there join it
+// chips dropped on an empty stack place are a stack knob there; more dropped there join it; a macro knob's place takes none
 const onto7 = (await state()).shown[9];
 await drag(await where('whereChip', 9), await where('whereBay', 7));
 st = await state();
 const seven = st.stacks.find((x) => x.slot === 7);
-assert.ok(seven && seven.kind === 'stack' && seven.n === 1, 'chips dropped on an empty knob make a cue stack there, not a macro');
-assert.equal(st.open.key, 'all', 'and what was being looked through stays out');
+assert.ok(seven && seven.kind === 'stack' && seven.n === 1, 'chips dropped on an empty stack place make a stack knob there');
+assert.deepEqual([st.open.key, st.build], ['all', seven.id], 'what was being looked through stays out, and the new stack knob is in the column');
 await drag(await where('whereChip', 10), await where('whereBay', 7));
 assert.equal((await stack(seven.id)).items.length, 2);
 assert.equal((await stack(seven.id)).items[0].u, onto7);
+const nStacks = (await state()).stacks.length;
+await drag(await where('whereChip', 4), await where('whereBay', 2));
+st = await state();
+assert.ok(st.stacks.length === nStacks && !st.stacks.some((x) => x.slot === 2), 'chips are not taken by a macro knob\'s place');
 tray = await get('/api/load');
-assert.deepEqual(tray.knobs.map((k) => [k.slot, k.kind]).sort((x, y) => x[0] - y[0]), [[4, 'macro'], [7, 'stack']], 'LOAD says which knob sweeps and which steps');
-assert.equal(tray.knobs.find((k) => k.slot === 4).depth, 0.7);
-assert.ok(tray.stacks.some((x) => x.id === seven.id), 'a stack on a knob is among the instrument\'s stacks too');
-await drag(await where('whereBay', 7), await where('whereBay', 12));               // (the cue stack on knob 7, dragged to knob 12)
-assert.deepEqual([(await stack(seven.id)).slot, (await stack(seven.id)).name], [12, 'CUE 12'], 'dragged to another knob it is on that knob, and still called by its knob');
-// a stack made by hand goes on a knob the same way (by its pocket, or KNOB on the bar); a macro put where a stack is takes the knob
+assert.deepEqual(tray.knobs.map((k) => [k.slot, k.kind, k.depth]).sort((x, y) => x[0] - y[0]), [[7, 'stack', null], [8, 'stack', null]], 'LOAD is given the two stack knobs');
+assert.ok(!tray.stacks.some((x) => x.id === seven.id), 'a stack knob is the module\'s: it is not among the stacks for the instrument\'s library screen');
+await drag(await where('whereBay', 7), await where('whereBay', 12));               // (the stack knob on 7, dragged to 12)
+assert.deepEqual([(await stack(seven.id)).slot, (await stack(seven.id)).name], [12, 'STACK 12'], 'dragged to another knob it is on that knob, and still called by its knob');
+// a stack made by hand goes on a stack place the same way; a place holds one thing; a macro knob's place refuses it
 await S((x) => window.sfLibrary.bench.revealPile(x), `st:${mine}`); await settle();
-await drag(await where('wherePile', `st:${mine}`, true), await where('whereBay', 2));
-assert.equal((await stack(mine)).slot, 2, 'a stack dragged onto a knob is a cue stack there');
-await pile(`st:${macroId}`);
-await page.select('#s-knob', '2'); await settle();
-assert.deepEqual([(await stack(macroId)).slot, (await stack(mine)).slot], [2, null], 'a knob holds one thing');
-await page.select('#s-knob', '4'); await settle();
+await drag(await where('wherePile', `st:${mine}`, true), await where('whereBay', 12));
+assert.deepEqual([(await stack(mine)).slot, (await stack(seven.id)).slot], [12, null], 'a knob holds one thing: the stack put there last');
+await S((x) => window.sfLibrary.bench.revealPile(x), `st:${mine}`); await settle();
+await drag(await where('wherePile', `st:${mine}`, true), await where('whereBay', 3));
+assert.equal((await stack(mine)).slot, 12, 'and it is refused a macro knob\'s place');
 await shot('knobs');
-part('KNOB FROM THIS makes a macro and it is given a knob; chips dropped on a knob are a cue stack; stacks and macros move between knobs');
+part('KNOB FROM THIS makes a stack knob, in the column; ADD TO MODULE gives it a knob; chips on a stack place are a stack knob; the two kinds of place refuse each other');
 
-// 12b. a knob is a module, in the chassis and on its pile, with its two knobs. DEPTH turned by hand is kept; TURN goes through what it holds
+// 12b. a stack knob is a module, on the module and on its pile, with one knob: TURN goes through what it holds
 {
-  const k = `st:${macroId}`;
-  const spots = await S((x) => window.sfLibrary.bench.knobSpots.filter((s) => s.key === x).map((s) => `${s.which}${s.group === window.sfLibrary.bench.tray ? ' in the chassis' : ''}`), k);
-  assert.ok(spots.includes('depth in the chassis') && spots.includes('turn in the chassis') && spots.includes('turn'), `the macro on knob 4 is a module in the chassis and on its pile (${spots.join(', ')})`);
-  const depthOf = () => S((id) => window.sfLibrary.state.stacks.find((x) => x.id === id).depth, macroId);
-  const d0 = await depthOf();
-  const at = await where('whereKnob', k, 'depth', true);
-  await drag(at, { x: at.x, y: at.y + 60 });                                       // (down: less. 150 pixels is the whole of it)
-  const d1 = await depthOf();
-  assert.ok(Math.abs(d1 - Math.max(0, d0 - 0.4)) < 0.03, `DEPTH turned down by hand is kept (${d0} to ${d1})`);
+  const k = `st:${knobId}`;
+  const spots = await S((x) => window.sfLibrary.bench.knobSpots.filter((s) => s.key === x).map((s) => `${s.which}${s.group === window.sfLibrary.bench.tray ? ' on the module' : ''}`).sort(), k);
+  assert.deepEqual(spots, ['turn', 'turn on the module'], `a stack knob is a module with a TURN and no DEPTH, on the module and on its pile (${spots.join(', ')})`);
   const t = await where('whereKnob', k, 'turn', true);
   await drag(t, { x: t.x, y: t.y - 170 });                                         // (all the way up: its last chip)
   const said = (await state()).status;
   assert.match(said, / OF /, `TURN goes through the chips it holds (${said})`);
-  // a cue stack's module has a TURN and no DEPTH
-  const cue = await S(() => { const s = window.sfLibrary.state.stacks.find((x) => x.kind === 'stack' && x.slot); return s ? window.sfLibrary.bench.knobSpots.filter((q) => q.key === `st:${s.id}` && q.group === window.sfLibrary.bench.tray).map((q) => q.which) : null; });
-  assert.deepEqual(cue, ['turn'], 'a cue stack on a knob is a module with a TURN and no DEPTH');
   await key('unmark').catch(() => {});
 }
-part('a knob is a module with its two knobs: DEPTH turned by hand is kept, TURN goes through what it holds');
+part('a stack knob is a module with its TURN, which goes through what it holds');
 
-// 12c. a knob macro (LEARN's kind): made of what differs between two marked chips, its moves dealt as plates, one set, one taken off, and into the chassis
+// 12c. a macro knob (LEARN's kind): made of what differs between two marked chips, its moves dealt as plates, one set, one taken off, and onto one of the module's first four places
 {
   await pile('all');
   await key('unmark').catch(() => {});
@@ -279,15 +293,96 @@ part('a knob is a module with its two knobs: DEPTH turned by hand is kept, TURN 
   assert.deepEqual(m2.map((l) => l.c), m1.filter((_, i) => i !== 1).map((l) => l.c), 'TAKE OUT takes a move off the knob');
   await S((x) => window.sfLibrary.bench.revealPile(x), `st:${lid}`); await settle();
   await drag(await where('wherePile', `st:${lid}`, true), await where('whereBay', 9));
-  assert.equal((await stack(lid)).slot, 9, 'dropped in a pocket of the chassis it is on that knob');
+  assert.equal((await stack(lid)).slot, null, 'a stack knob\'s place refuses it');
+  await S((x) => window.sfLibrary.bench.revealPile(x), `st:${lid}`); await settle();
+  await drag(await where('wherePile', `st:${lid}`, true), await where('whereBay', 3));
+  assert.equal((await stack(lid)).slot, 3, 'dropped on one of the first four places it is on that knob');
   const k = (await get('/api/load')).knobs.find((x) => x.id === lid);
-  assert.ok(k && k.kind === 'learn' && k.uids.length === 0 && k.links.length === m2.length && k.links[0].d === -0.5, 'and LOAD is given its moves');
+  assert.ok(k && k.kind === 'learn' && k.slot === 3 && k.uids.length === 0 && k.links.length === m2.length && k.links[0].d === -0.5, 'and LOAD is given its moves');
   const spots = await S((x) => window.sfLibrary.bench.knobSpots.filter((q) => q.key === x && q.group === window.sfLibrary.bench.tray).map((q) => q.which).sort(), `st:${lid}`);
-  assert.deepEqual(spots, ['depth', 'turn'], 'its module in the chassis has its two knobs');
+  assert.deepEqual(spots, ['depth', 'turn'], 'its module has its two knobs');
+  // DEPTH turned by hand is kept
+  const depthOf = () => S((id) => window.sfLibrary.state.stacks.find((x) => x.id === id).depth, lid);
+  const d0 = await depthOf();
+  const at = await where('whereKnob', `st:${lid}`, 'depth', true);
+  await drag(at, { x: at.x, y: at.y + 60 });                                       // (down: less. 150 pixels is the whole of it)
+  const d1 = await depthOf();
+  assert.ok(Math.abs(d1 - Math.max(0, d0 - 0.4)) < 0.03, `DEPTH turned down by hand is kept (${d0} to ${d1})`);
   await key('unmark');
   await shot('knob-macro');
 }
-part('KNOB MACRO makes a knob macro of what differs between two chips: its moves are plates, set and taken off, and LOAD is given them');
+part('KNOB MACRO makes a macro knob of what differs between two chips: its moves are plates, set and taken off; it goes on places 1 to 4, and LOAD is given its moves');
+
+// 12e. a chip's keys, and the column where a stack knob is built
+{
+  await pile('all');
+  await key('b-new');
+  let st = await state();
+  assert.equal(st.build, null, 'NEW: an empty column');
+  const [u0, u1, u2] = st.shown;
+  assert.deepEqual([u0, u1], newest, '(the two newest lie first)');
+  // a key on a chip, pressed: that part is put out for it. The page keeps it; the chip is not chosen by it
+  await click(await where('whereKey', 1, 'kick'));
+  await click(await where('whereKey', 1, 'returns'));
+  st = await state();
+  assert.deepEqual([st.off[u1], st.selected === u1], [['kick', 'returns'], false], 'two keys put out on a chip lying on the table');
+  // heard with its keys: from its stems, the parts put out silent; a key pressed while it plays is heard at once
+  await click(await where('whereChip', 1));
+  await page.waitForFunction(() => /WITHOUT|WHOLE/.test(document.getElementById('status').textContent), { timeout: 30000 });
+  st = await state();
+  assert.match(st.status, /WITHOUT KICK, THE RETURNS/, `a chip with keys out plays from its stems (${st.status})`);
+  const gains = () => S(() => import('./js/stems.js').then((m) => m.playing()));
+  assert.equal(await gains(), u1, 'its stems are what is playing');
+  await click(await where('whereKey', 1, 'kick'));
+  st = await state();
+  assert.deepEqual([st.off[u1], st.playing, await gains()], [['returns'], u1, u1], 'a key lit again while it plays: still its stems, with that part back');
+  await page.keyboard.press(' '); await settle();
+  assert.equal(await gains(), null, 'stopped');
+  await click(await where('whereKey', 1, 'kick'));
+  // dragged into the empty column: a new stack knob begins, and the chip goes in with its keys
+  await drag(await where('whereChip', 1), await where('whereColumn'));
+  st = await state();
+  const built = st.build;
+  assert.ok(built, 'a chip put into the empty column begins a stack knob');
+  let b = await stack(built);
+  assert.deepEqual([b.kind, b.items, /^STACK KNOB \d+$/.test(b.name)], ['stack', [{ u: u1, off: ['returns', 'kick'] }], true]);
+  // more: at the end, and at a place among the others
+  await drag(await where('whereChip', 0), await where('whereColumn'));
+  await drag(await where('whereChip', 2), await where('whereColumn', 1));
+  b = await stack(built);
+  assert.deepEqual(b.items.map((x) => x.u), [u1, u2, u0], 'chips go in where they are put down');
+  // put in order by dragging; a key on a column's chip is kept by the stack
+  await drag(await where('whereColumn', 0), await where('whereColumn'));
+  assert.deepEqual((await stack(built)).items.map((x) => x.u), [u2, u0, u1], 'dragged within the column: in its new place');
+  await click(await where('whereKey', 0, 'bass', true));
+  b = await stack(built);
+  assert.deepEqual([b.items[0], b.items[2]], [{ u: u2, off: ['bass'] }, { u: u1, off: ['returns', 'kick'] }], 'a key on the column\'s chip: the stack keeps it');
+  // named at its head; ADD TO MODULE; LOAD is given each chip with what it does not take
+  await type('b-name', 'show one');
+  await key('b-add');
+  b = await stack(built);
+  const free = b.slot;
+  assert.ok(b.name === 'SHOW ONE' && free >= 5 && free <= 16, `named, and on the first free stack knob (${free})`);
+  const knob = (await get('/api/load')).knobs.find((x) => x.id === built);
+  assert.deepEqual([knob.kind, knob.uids, knob.off], ['stack', [u2, u0, u1], [['bass'], [], ['returns', 'kick']]], 'LOAD is given the stack knob, each chip with the parts put out for it');
+  await shot('column');
+  // dragged out of the column: out of the stack knob, still in the library
+  await drag(await where('whereColumn', 1), await where('whereChip', 4));
+  assert.deepEqual((await stack(built)).items.map((x) => x.u), [u2, u1], 'a chip dragged out of the column is out of the stack knob');
+  assert.equal((await state()).n, 240, 'and still in the library');
+  // ADD TO MODULE again takes it off; NEW leaves it in the rack; pressed on the module it is back in the column
+  await key('b-add');
+  assert.equal((await stack(built)).slot, null, 'pressed again, it comes off the module');
+  await key('b-add');
+  await key('b-new');
+  assert.equal((await state()).build, null);
+  await click(await where('whereBay', (await stack(built)).slot));
+  assert.equal((await state()).build, built, 'a stack knob pressed on the module is in the column again');
+  await pile('all');
+}
+part('a chip carries its keys: put out, heard from its stems, and taken into the column with it; the column is put in order, named, and added to the module');
+
+
 
 // 12d. chips dropped on the chassis itself, under its knobs: those and no others go to SF-000 at LOAD, in one stack kept for that
 {
@@ -388,7 +483,7 @@ part('the wheel moves the table, or the rack\'s rows, by where the pointer is');
 await page.setViewport({ width: 1180, height: 760, deviceScaleFactor: 1 });
 await settle(); await settle();
 const cols = await S(() => window.sfLibrary.bench.columns());
-assert.ok(cols >= 2 && cols < 4);
+assert.ok(cols >= 1 && cols < 3);
 assert.equal((await state()).shown.length, (await state()).n);
 await shot('small');
 await page.setViewport({ width: 1600, height: 900, deviceScaleFactor: 1 });

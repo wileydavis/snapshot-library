@@ -6,12 +6,12 @@
 // finishes and light (look.js). This file draws and is handled; what anything means is main.js's
 // business, told here through setRack / setTray / deal / setMarks and heard back through the handlers.
 import * as THREE from '../vendor/three.min.js';
-import { faceCanvas, COL, NIGHT } from './card.js';
+import { faceCanvas, keyAt, keyRects, CARD_W, CARD_H, COL, NIGHT } from './card.js';
 import { heat } from './profile.js';
 import { PLATE, PANE, CASE, CORNER, UNIT, SUN, shared, surface, another, setRect, setMap, setColour, dropMap, litColour, makeRoom, slabGeo, plateGeo, Picture, loadWear, KnobBatch, RING } from './look.js';
 
-// ---------------------------------------------------------------- sizes (a chip is 4.12 by 1: the card's own shape, and as thick as one of the instrument's plates)
-export const CW = 4.12, CD = 1.0, CT = PLATE;
+// ---------------------------------------------------------------- sizes (a chip is the card's own shape, 4.12 wide, and as thick as one of the instrument's plates)
+export const CW = 4.12, CD = (CW * CARD_H) / CARD_W, CT = PLATE;
 const PITCH_X = CW + 0.32, PITCH_Z = CD + 0.3;                         // the table's cells
 const POCKET_W = CW + 0.44, POCKET_D = CD + 0.36;                      // a stack's cut-out in the rack's plate
 const LABEL_D = 0.52;                                                  // a stack's name plate, in front of its cut-out
@@ -26,14 +26,16 @@ const MW = MOD.w / UNIT, MD = MOD.d / UNIT;
 // The chassis: the model of SF-000 the tray has become. Sixteen pockets, four by four, as its snapshot knobs are.
 const BAY_X = MW + 0.12, BAY_Z = MD + 0.2, CH = 0.42;                  // the pockets' pitch; how high its case stands on the bench
 const TRAY_W = 4 * BAY_X + 0.3;
+const COL_W = CW + 0.46, COL_HEAD = 1.5;                               // the stack knob's column, between the table and the module: a chip wide; at its head, room for its name and its keys (the page sets them there)
+const MACRO_PLACES = 4;                                                // the module's places 1 to 4 take a macro knob, 5 to 16 a stack knob
 const RAIL = 0.3, RAIL_H = 0.2;                                        // the rails the rack's plate slides under
 const MINI = 0.3;                                                      // the tray's chips are a quarter the size
 const TILT = (57 * Math.PI) / 180, FOV = 26;
-const MIN_CHIP_PX = 226;
+const MIN_CHIP_PX = 214;
 
 const TEAL = '#4490A1';                                                // a sweeping knob's light on the instrument
-const KNOB_LIGHT = { macro: TEAL, cue: '#C5843F', learn: '#E9E6E2' };  // (a stack's knob steps: amber)
-const KNOB_KIND = { macro: 'MACRO', cue: 'CUE STACK', learn: 'KNOB MACRO' };
+const KNOB_LIGHT = { stack: TEAL, learn: '#E9E6E2' };                  // (as the instrument lights them: a stack knob teal, a macro knob white)
+const KNOB_KIND = { stack: 'STACK KNOB', learn: 'MACRO KNOB' };
 const EDGE_NONE = '#9A9B96';                                           // a chip with no sound kept
 const edgeColour = (s) => (s && s.move ? (s.move.d >= 0 ? COL.amber : TEAL) : s && s.p ? heat(s.p.bright) : EDGE_NONE);      // (a knob macro's move: up or down)
 const clamp = (x, lo, hi) => Math.min(hi, Math.max(lo, x));
@@ -83,7 +85,8 @@ export class Bench {
     this.ray = new THREE.Raycaster();
 
     this.rackPiles = []; this.trayData = { bays: [], stacks: [] }; this.dealt = []; this.items = new Map();
-    this.faces = new Map();                                 // uid -> { tex, label, used }
+    this.column = null; this.colItems = new Map(); this.colScroll = 0; this.colGap = -1;       // the stack knob being built: { key, name, slot, chips: [{ uid, s, off }] }
+    this.faces = new Map();                                 // a chip's print, by what is on it -> { tex, used }
     this.knobSpots = []; this.turns = new Map();            // the modules' knobs, for the hand; and how far each TURN has been turned
     this.marks = { selected: null, playing: null, marked: new Set() };
     this.scroll = 0; this.scrollTo = 0; this.rackRow = 0; this.rackShift = 0;
@@ -96,7 +99,8 @@ export class Bench {
 
     this.makeMaterials();
     this.fixed = new THREE.Group(); this.rack = new THREE.Group(); this.table = new THREE.Group(); this.tray = new THREE.Group(); this.held = new THREE.Group();
-    this.scene.add(this.fixed, this.rack, this.table, this.tray, this.held);
+    this.col = new THREE.Group();
+    this.scene.add(this.fixed, this.rack, this.table, this.col, this.tray, this.held);
     this.room = makeRoom(); this.scene.add(this.room);
     this.lights();
     this.layout();
@@ -156,8 +160,8 @@ export class Bench {
     this.faces.clear();
     for (const t of this.modulePrints.values()) t.dispose();
     this.modulePrints.clear();
-    for (const it of this.items.values()) { it.textured = false; setColour(it.mat, this.P.plate); it.mat.uniforms.uRough.value = this.P.plateRough; }
-    this.buildFixed(); this.buildRack(); this.buildTray(); this.place(false);
+    for (const it of [...this.items.values(), ...this.colItems.values()]) { it.textured = false; setColour(it.mat, this.P.plate); it.mat.uniforms.uRough.value = this.P.plateRough; }
+    this.buildFixed(); this.buildRack(); this.buildTray(); this.buildColumn(); this.place(false); this.placeColumn(false);
     this.poke();
   }
 
@@ -182,8 +186,8 @@ export class Bench {
     this.room.material.uniforms.uRes.value.copy(size);
     const tf = Math.tan((FOV * Math.PI) / 360), tx = tf * (w / h), sin = Math.sin(TILT), cos = Math.cos(TILT);
     // the table's columns: as many as leave a chip at least MIN_CHIP_PX wide
-    const cols = clamp(Math.floor(((w / MIN_CHIP_PX) * CW - TRAY_W - 3 * MARGIN + 0.32) / PITCH_X), 2, 12);
-    const W = cols * PITCH_X - 0.32 + TRAY_W + 3 * MARGIN;
+    const cols = clamp(Math.floor(((w / MIN_CHIP_PX) * CW - TRAY_W - COL_W - 4 * MARGIN + 0.32) / PITCH_X), 1, 12);
+    const W = cols * PITCH_X - 0.32 + COL_W + TRAY_W + 4 * MARGIN;
     // the eye: looking down at TILT, as far off as shows W across the bottom edge of the window
     const tb = sin / (sin + cos * tf), tt = sin / (sin - cos * tf);
     const zNear1 = cos + tb * (-cos + sin * tf), zFar1 = cos + tt * (-cos - sin * tf);
@@ -209,6 +213,9 @@ export class Bench {
     L.wholeRows = Math.max(1, Math.floor((zNear - 0.25 - L.zt0) / PITCH_Z));
     L.tx0 = -W / 2 + MARGIN;                                         // the table's left edge
     L.trayX = W / 2 - MARGIN - TRAY_W;
+    L.colX = L.trayX - MARGIN - COL_W;                               // the column's left edge
+    L.colZ = L.zt0 + COL_HEAD;                                       // its first chip's far edge
+    L.colRows = Math.max(1, Math.floor((zNear - 0.25 - L.colZ) / PITCH_Z));
     L.rackCols = Math.max(2, Math.floor((2 * this.halfWidthAt(L.zr1 - RACK_PITCH_Z * 0.5) - 2 * MARGIN + 0.46) / RACK_PITCH_X));
     L.rackX0 = -(L.rackCols * RACK_PITCH_X - 0.46) / 2;
     this.clipTable.constant = -(L.zr1 + LIP * 0.5);
@@ -232,14 +239,18 @@ export class Bench {
     // a chip's face is drawn as fine as it shows
     this.faceScale = clamp(((w / W) * CW * dpr) / 272 * 1.12, 1.5, 3);
 
-    this.buildFixed(); this.buildRack(); this.buildTray(); this.place(true);
+    this.buildFixed(); this.buildRack(); this.buildTray(); this.buildColumn(); this.place(true); this.placeColumn(true);
     this.poke();
     this.tellRows();
   }
   // Which rows of the rack show, of how many, and where the lip is in the window (for the page's row keys).
   tellRows() {
     const L = this.L, rows = Math.ceil(this.rackPiles.length / L.rackCols);
-    this.on.rows?.({ first: this.rackRow, shown: L.rackRows, rows, y: this.screenOf(0, 0.3, L.zr1 + LIP / 2).y - this.canvas.getBoundingClientRect().top });
+    const top = this.canvas.getBoundingClientRect();
+    this.on.rows?.({ first: this.rackRow, shown: L.rackRows, rows, y: this.screenOf(0, 0.3, L.zr1 + LIP / 2).y - top.top });
+    // (and where the column's head is, for the keys the page sets over it)
+    const a = this.screenOf(L.colX, 0.05, L.zt0 - 0.02), b = this.screenOf(L.colX + COL_W, 0.05, L.zt0 - 0.02);
+    this.on.columnAt?.({ x: a.x - top.left, y: a.y - top.top, w: b.x - a.x });
   }
   turnRack(by) { const row = clamp(this.rackRow + by, 0, this.rackRowsMost()); if (row !== this.rackRow) { this.rackRow = row; this.tellRows(); this.poke(); } }
 
@@ -313,7 +324,7 @@ export class Bench {
       g.fillStyle = ink; g.font = LABEL(11.5); g.letterSpacing = '0.6px';
       g.fillText(count, 5, 62);
       g.textAlign = 'center'; g.font = LABEL(9.5); g.letterSpacing = '0.5px';
-      g.fillText('TURN', MOD.knobs[0][0], 76); g.fillText('DEPTH', MOD.knobs[1][0], 76);
+      g.fillText('TURN', MOD.knobs[0][0], 76); if (kind === 'learn') g.fillText('DEPTH', MOD.knobs[1][0], 76);     // (a stack knob has no depth: it is its snapshots)
       g.letterSpacing = '0px';
     }, MOD.w * k, MOD.d * k);
     this.modulePrints.set(key, t);
@@ -345,10 +356,10 @@ export class Bench {
     this.badge(group, tex, x + nx / UNIT, z + nz / UNIT, x + (nx + nw) / UNIT, z + (nz + nd) / UNIT, y + PLATE, { colour: ground, clip });
     const turned = m.key ? this.turns.get(m.key) || 0 : 0;
     const iT = batch.add(x + MOD.knobs[0][0] / UNIT, y + PLATE, z + MOD.knobs[0][1] / UNIT, turned, light, false);        // TURN: where the hand left it
-    const iD = batch.add(x + MOD.knobs[1][0] / UNIT, y + PLATE, z + MOD.knobs[1][1] / UNIT, m.kind === 'cue' ? 0 : m.depth ?? 1, '#E9E6E2', true);      // DEPTH: how far it is up (a stack's knob has none)
+    const iD = m.kind === 'learn' ? batch.add(x + MOD.knobs[1][0] / UNIT, y + PLATE, z + MOD.knobs[1][1] / UNIT, m.depth ?? 1, '#E9E6E2', true) : -1;      // DEPTH: how far a macro knob goes (a stack knob has none)
     // (where each knob is, for the hand: the group's own place, a little above the plate)
     if (m.key && group !== this.held) for (const [which, i, at] of [['turn', iT, MOD.knobs[0]], ['depth', iD, MOD.knobs[1]]]) {
-      if (which === 'depth' && m.kind === 'cue') continue;
+      if (i < 0) continue;
       this.knobSpots.push({ key: m.key, which, batch, i, group, x: x + at[0] / UNIT, y: y + PLATE + 0.16, z: z + at[1] / UNIT });
     }
   }
@@ -521,7 +532,7 @@ export class Bench {
       }, 1160, 60);
       this.badge(this.tray, tex, x0 + 0.21, z, x1 - 0.21, z + 0.4, top);
     };
-    title('SF-000', z0 + 0.2, 'ITS SIXTEEN SNAPSHOT KNOBS, AS LOAD LEAVES THEM');
+    title('SF-000 MODULE', z0 + 0.2, '1 TO 4 MACRO KNOBS   5 TO 16 STACK KNOBS');
 
     const knobs = new KnobBatch({ dark: D });
     for (let i = 0; i < 16; i++) {
@@ -529,9 +540,12 @@ export class Bench {
       if (bay.key && bay.knob) this.addModule(this.tray, knobs, { ...bay.knob, name: bay.name, slot: i + 1, open: bay.open, key: bay.key }, b.x, CH, b.z);
       else {
         // an empty pocket: its number, on the floor of it
+        // (a macro knob's place is marked as its knob is lit, white; a stack knob's, teal)
+        const macro = i < MACRO_PLACES;
         const tex = plateTexture((g, w, h) => {
+          g.fillStyle = macro ? KNOB_LIGHT.learn : KNOB_LIGHT.stack; g.fillRect(0, h - 7, w, 7);
           g.textBaseline = 'middle'; g.textAlign = 'center'; g.fillStyle = D ? NIGHT.dim : COL.lit; g.font = LEGEND(44);
-          g.fillText(String(i + 1), w / 2, h / 2 + 3);
+          g.fillText(String(i + 1), w / 2, h / 2);
         }, 84, 60);
         this.badge(this.tray, tex, b.x + 0.06, b.z + 0.06, b.x + 0.48, b.z + 0.36, CH, { colour: D ? NIGHT.badge : COL.black });
       }
@@ -539,7 +553,7 @@ export class Bench {
     }
     knobs.addTo(this.tray);
 
-    title('LIBRARY', zs - 0.48, stacks.length < (T.stacks || []).length ? `${stacks.length} OF ${T.stacks.length} SHOWN` : 'DROP A STACK HERE: LOAD BRINGS IT');
+    title('ITS LIBRARY', zs - 0.48, stacks.length < (T.stacks || []).length ? `${stacks.length} OF ${T.stacks.length} SHOWN` : 'STACKS FOR ITS LIBRARY SCREEN: DROP ONE HERE');
     const made = [];
     stacks.forEach((s, i) => {
       const z = zs + i * 0.6;
@@ -574,23 +588,81 @@ export class Bench {
     }
   }
 
+  // ---------------------------------------------------------------- the stack knob's column
+  // Between the table and the module: the stack knob being built, its chips one under another in the order the knob
+  // will go through them, each with its keys. data: { key, name, slot, chips: [{ uid, s, off }] }, or null (nothing in
+  // it yet: the first chip put down begins a new one).
+  setColumn(data) {
+    this.column = data;
+    const ids = new Set((data ? data.chips : []).map((d) => d.uid));
+    for (const [id, it] of this.colItems) if (!ids.has(id)) { this.dropItem(it, this.col); this.colItems.delete(id); }
+    for (const it of this.colItems.values()) it.textured = false;
+    this.clampColumn();
+    this.buildColumn(); this.placeColumn(false); this.poke();
+  }
+  clampColumn() { this.colScroll = clamp(this.colScroll, 0, Math.max(0, (this.column ? this.column.chips.length : 0) - this.L.colRows + 1)); }
+  buildColumn() {
+    const L = this.L, D = this.dark, c = this.column, x0 = L.colX, x1 = x0 + COL_W;
+    if (!this.colFixed) { this.colFixed = new THREE.Group(); this.col.add(this.colFixed); }
+    this.clear(this.colFixed);
+    // its sides: two low rails, from the lip to the near edge
+    for (const x of [x0 - 0.07, x1 - 0.02]) this.bar(this.colFixed, this.mat.rail, x, L.zt0 - 0.1, x + 0.09, L.zNear + 4, 0, 0.07);
+    const n = c ? c.chips.length : 0;
+    if (!n) {
+      // (empty: what it is for, printed where its first chip will lie)
+      const hint = plateTexture((g, w, h) => {
+        g.textBaseline = 'middle'; g.textAlign = 'center'; g.fillStyle = D ? NIGHT.ink : COL.lit; g.font = LEGEND(52); g.letterSpacing = '3px';
+        g.fillText('DRAG CHIPS HERE', w / 2, h * 0.34); g.fillText('TO BUILD A STACK KNOB', w / 2, h * 0.7);
+        g.letterSpacing = '0px';
+      }, 800, 220);
+      this.badge(this.colFixed, hint, x0 + 0.25, L.colZ + 0.1, x1 - 0.25, L.colZ + 0.1 + CD, 0, { colour: D ? NIGHT.badge : COL.black });
+    }
+  }
+  // The column's chips as they lie: all of them, or (while one of them is held) the rest.
+  colLying() {
+    const all = this.column ? this.column.chips : [];
+    if (!(this.drag && this.drag.kind === 'chips' && this.drag.on && this.drag.where === 'column')) return all;
+    const held = new Set(this.drag.uids);
+    return all.filter((d) => !held.has(d.uid));
+  }
+  colSpot(index) { const L = this.L; return { x: L.colX + COL_W / 2, z: L.colZ + (index - this.colScroll) * PITCH_Z + CD / 2 }; }
+  placeColumn(jump) {
+    const all = this.column ? this.column.chips : [], list = this.colLying(), gap = this.colGap;
+    const seen = new Set();
+    for (let slot = 0, j = 0; j < list.length; slot++) {
+      if (slot === gap) continue;
+      const d = list[j++];
+      if (slot < this.colScroll - 1 || slot > this.colScroll + this.L.colRows + 1) continue;
+      let it = this.colItems.get(d.uid), born = false;
+      if (!it) { it = this.makeItem(d, d.uid, this.col); this.colItems.set(d.uid, it); born = true; }
+      seen.add(d.uid);
+      it.index = all.indexOf(d); it.s = d.s; it.label = it.index; it.off = d.off || null; it.where = 'column';
+      if (!it.textured) { setMap(it.mat, this.face(d.s, it.index, it.off)); it.textured = true; }
+      const p = this.colSpot(slot);
+      const lift = it.uid === this.marks.selected ? 0.2 : this.hover && this.hover.key && this.hover.item === it ? 0.07 : 0;
+      it.target = { x: p.x, y: CT / 2 + 0.006 + lift, z: p.z };
+      if (born || jump) it.group.position.set(it.target.x, it.target.y, it.target.z);
+      if (born) this.markItem(it);
+    }
+    for (const [id, it] of this.colItems) if (!seen.has(id)) { this.dropItem(it, this.col); this.colItems.delete(id); }
+  }
+
   // ---------------------------------------------------------------- chips' faces
-  face(s, label) {
-    const key = s.uid, had = this.faces.get(key);
-    const stamp = `${label}|${s.name}|${s.move ? s.move.d : ''}`;
-    if (had && had.stamp === stamp) { had.used = ++this.frame; return had.tex; }
-    if (had) had.tex.dispose();
-    const tex = printOf(faceCanvas(s, label, this.faceScale || 2));
-    this.faces.set(key, { tex, stamp, used: ++this.frame });
-    if (this.faces.size > 280) {                                     // the least lately seen go, unless they lie on the bench now
-      const live = new Set([...this.items.values()].map((it) => it.uid));
+  face(s, label, off = null) {
+    const out = off && off.length ? [...off].sort().join(',') : '';
+    const key = `${s.uid}~${label}~${out}~${s.name}~${s.move ? s.move.d : ''}`, had = this.faces.get(key);
+    if (had) { had.used = ++this.frame; return had.tex; }
+    const tex = printOf(faceCanvas(s, label, this.faceScale || 2, off));
+    this.faces.set(key, { tex, used: ++this.frame, uid: s.uid });
+    if (this.faces.size > 320) {                                     // the least lately seen go, unless they lie on the bench now
+      const live = new Set([...this.items.values(), ...this.colItems.values()].map((it) => it.uid));
       for (const p of this.rackPiles) if (p.top) live.add(p.top.uid);
-      const old = [...this.faces.entries()].filter(([k]) => !live.has(k)).sort((a, b) => a[1].used - b[1].used).slice(0, 90);
+      const old = [...this.faces.entries()].filter(([, v]) => !live.has(v.uid)).sort((x, y) => x[1].used - y[1].used).slice(0, 110);
       for (const [k, v] of old) { v.tex.dispose(); this.faces.delete(k); }
     }
     return tex;
   }
-  forgetFace(uid) { const f = this.faces.get(uid); if (f) { f.tex.dispose(); this.faces.delete(uid); } }
+  forgetFace(uid) { for (const [k, v] of [...this.faces]) if (v.uid === uid) { v.tex.dispose(); this.faces.delete(k); } }
 
   // ---------------------------------------------------------------- the table: the open stack, dealt
   // chips: [{ uid, s, label, n }] in order (n: which of a chip's turns in a song this is). from: the
@@ -609,17 +681,17 @@ export class Bench {
     this.origin = null;
     this.poke();
   }
-  makeItem(d, id) {
+  makeItem(d, id, into = this.table) {
     const it = { id, uid: d.uid, group: new THREE.Group() };
     it.mat = another(this.mat.chip, { edge: edgeColour(d.s), number: numberOf(d.uid), clip: this.onTable });
     it.mesh = new THREE.Mesh(this.chipGeo, it.mat);
     it.mesh.castShadow = true; it.mesh.receiveShadow = true;
     it.group.add(it.mesh);
-    this.table.add(it.group);
+    into.add(it.group);
     return it;
   }
-  dropItem(it) {
-    this.table.remove(it.group);
+  dropItem(it, from = this.table) {
+    from.remove(it.group);
     it.mat.dispose();
     if (it.ring) it.ring.material.dispose();
     if (it.clip) it.clip.material.dispose();
@@ -630,7 +702,7 @@ export class Bench {
   }
   // The chips as they lie now: all of them, or (while some are held over the table) the rest.
   lying() {
-    if (!(this.drag && this.drag.kind === 'chips' && this.drag.on)) return this.dealt;
+    if (!(this.drag && this.drag.kind === 'chips' && this.drag.on && this.drag.where !== 'column')) return this.dealt;
     if (!this.view) { const held = new Set(this.drag.uids); this.view = this.dealt.filter((d) => !held.has(d.uid)); }
     return this.view;
   }
@@ -654,10 +726,10 @@ export class Bench {
       if (!it) { it = this.makeItem(d, id); this.items.set(id, it); born = true; }
       seen.add(id);
       it.index = this.dealt === list ? j : this.dealt.indexOf(d);
-      it.s = d.s; it.label = d.label;
-      if (!it.textured) { setMap(it.mat, this.face(d.s, d.label)); it.textured = true; }
+      it.s = d.s; it.label = d.label; it.off = d.off || null; it.where = 'table';
+      if (!it.textured) { setMap(it.mat, this.face(d.s, d.label, it.off)); it.textured = true; }
       const p = this.spot(slot);
-      const lift = it.uid === this.marks.selected ? 0.2 : this.hover && this.hover.key === it.id ? 0.07 : 0;
+      const lift = it.uid === this.marks.selected ? 0.2 : this.hover && this.hover.item === it ? 0.07 : 0;
       it.target = { x: p.x, y: CT / 2 + 0.006 + lift, z: p.z };
       if (born && this.origin && p.z > L.zr1 && p.z < L.zNear + 1) it.group.position.copy(this.origin);       // dealt: it flies out of its pile
       else if (born || jump) it.group.position.set(it.target.x, it.target.y, it.target.z);
@@ -667,7 +739,7 @@ export class Bench {
   }
 
   // selected (lifted, in a yellow tray), playing (green), marked (a yellow clip on its end)
-  setMarks(marks) { this.marks = { ...this.marks, ...marks }; for (const it of this.items.values()) this.markItem(it); this.place(false); this.poke(); }
+  setMarks(marks) { this.marks = { ...this.marks, ...marks }; for (const it of [...this.items.values(), ...this.colItems.values()]) this.markItem(it); this.place(false); this.placeColumn(false); this.poke(); }
   markItem(it) {
     const sel = it.uid === this.marks.selected, play = it.uid === this.marks.playing, mark = this.marks.marked.has(it.uid);
     const want = play ? 'green' : sel ? 'yellow' : '';
@@ -723,7 +795,7 @@ export class Bench {
     if (Math.abs(rz - this.rackShift) > 0.004) { this.rackShift += (rz - this.rackShift) * ease; moving = true; } else this.rackShift = rz;
     this.rack.position.z = this.rackShift;
     const k = 1 - Math.exp(-dt * 14);
-    for (const it of this.items.values()) {
+    for (const it of [...this.items.values(), ...this.colItems.values()]) {
       if (!it.target) continue;
       const p = it.group.position, t = it.target;
       const dx = t.x - p.x, dy = t.y - p.y, dz = t.z - p.z;
@@ -753,10 +825,14 @@ export class Bench {
     this.ray.setFromCamera(v, this.camera);
     const L = this.L;
     if (!(this.drag && this.drag.on)) {
-      const meshes = [];
-      for (const it of this.items.values()) meshes.push(it.mesh);
-      const hit = this.ray.intersectObjects(meshes, false).find((h) => h.point.z > L.zr1 + LIP * 0.5);
-      if (hit) { const it = [...this.items.values()].find((x) => x.mesh === hit.object); if (it) return { type: 'chip', item: it, uid: it.uid, index: it.index }; }
+      const all = [...this.items.values(), ...this.colItems.values()];
+      const hit = this.ray.intersectObjects(all.map((it) => it.mesh), false).find((h) => h.point.z > L.zr1 + LIP * 0.5);
+      const it = hit ? all.find((x) => x.mesh === hit.object) : null;
+      if (it) {
+        // (which of its keys the pointer is on, if any: the point on the chip, in the card's own measure)
+        const at = it.group.position, cx = ((hit.point.x - at.x) / CW + 0.5) * CARD_W, cy = ((hit.point.z - at.z) / CD + 0.5) * CARD_H;
+        return { type: 'chip', where: it.where, item: it, uid: it.uid, index: it.index, lane: keyAt(it.s, cx, cy) };
+      }
     }
     const g = this.ground(e, 0.1);
     // a pile is as tall as it stands: the nearest one the pointer's line passes through, or the pocket and plate under it
@@ -778,6 +854,11 @@ export class Bench {
       const z = g.z - this.rackShift;
       const h = (this.rackHits || []).find((p) => g.x >= p.x0 && g.x <= p.x1 && z >= p.z0 && z <= p.z1 && p.row >= this.rackRow - 0.5 && p.row < this.rackRow + L.rackRows);
       return h ? { type: 'pile', key: h.key, pile: h.pile } : { type: 'rack' };
+    }
+    if (g.x >= L.colX - 0.1 && g.x <= L.colX + COL_W + 0.1 && g.x < L.trayX) {
+      // the column: which place the pointer is at (for a chip put down among the others)
+      const n = this.colLying().length;
+      return { type: 'column', index: clamp(Math.floor((g.z - L.colZ + PITCH_Z * 0.5) / PITCH_Z + this.colScroll), 0, n) };
     }
     const gt = this.ground(e, CH + PLATE);                             // (the chassis stands higher than the bench)
     if (gt.x >= L.trayX && gt.z >= L.zt0 - 0.05) {
@@ -821,16 +902,16 @@ export class Bench {
       if (this.down && !this.drag && Math.hypot(e.clientX - this.down.x, e.clientY - this.down.y) > 6) this.startDrag(e);
       if (this.drag) { this.moveDrag(e); return; }
       if (this.knobUnder(e)) {                                      // over a module's knob: it is for turning
-        if (this.hover) { this.hover = null; this.place(false); this.poke(); this.on.hover?.(null); }
+        if (this.hover) { this.hover = null; this.place(false); this.placeColumn(false); this.poke(); this.on.hover?.(null); }
         c.style.cursor = 'ns-resize';
         return;
       }
       const u = this.under(e);
-      const key = u.type === 'chip' ? u.item.id : u.type === 'pile' ? `p${u.key}` : u.type === 'bay' ? `b${u.slot}` : '';
-      if (key !== (this.hover ? this.hover.key : '')) {
-        this.hover = key ? { ...u, key: u.type === 'chip' ? u.item.id : key } : null;
+      const key = u.type === 'chip' ? `${u.where}:${u.item.id}:${u.lane || ''}` : u.type === 'pile' ? `p${u.key}` : u.type === 'bay' ? `b${u.slot}` : '';
+      if (key !== (this.hover ? this.hover.hkey : '')) {
+        this.hover = key ? { ...u, hkey: key, key: u.type === 'chip' ? u.item.id : key } : null;
         c.style.cursor = key && (u.type !== 'bay' || u.key) ? 'pointer' : 'default';
-        this.place(false); this.poke();
+        this.place(false); this.placeColumn(false); this.poke();
         this.on.hover?.(this.hover);
       }
     });
@@ -844,7 +925,8 @@ export class Bench {
       if (this.drag) { this.endDrag(e); return; }
       if (!down) return;
       const u = down.u;
-      if (u.type === 'chip') this.on.chip?.(u.uid, u.index, { shift: down.shift });
+      if (u.type === 'chip' && u.lane) this.on.lane?.(u.uid, u.where, u.index, u.lane);
+      else if (u.type === 'chip') this.on.chip?.(u.uid, u.index, { shift: down.shift, where: u.where });
       else if (u.type === 'pile') this.on.pile?.(u.key, { inTray: !!u.inTray });
       else if (u.type === 'bay') this.on.bay?.(u.slot, u.key);
       else this.on.nothing?.();
@@ -859,6 +941,9 @@ export class Bench {
       if (g.z < this.L.zr1) {
         this.wheelRack = (this.wheelRack || 0) + by;
         if (Math.abs(this.wheelRack) >= 0.5) { this.turnRack(Math.sign(this.wheelRack)); this.wheelRack = 0; }
+      } else if (g.x >= this.L.colX - 0.1 && g.x <= this.L.colX + COL_W + 0.1) {
+        this.colScroll = Math.round(this.colScroll + Math.sign(by));
+        this.clampColumn(); this.placeColumn(false);
       } else {
         this.scrollTo += by * 1.0;
         this.clampScroll();
@@ -874,12 +959,12 @@ export class Bench {
     const u = this.down.u;
     this.clear(this.held);
     if (u.type === 'chip') {
-      const uids = this.on.dragSet ? this.on.dragSet(u.uid) : [u.uid];
-      this.drag = { kind: 'chips', uids, from: u.index, on: true, at: this.ground(e, 1) };
+      const uids = u.where === 'column' ? [u.uid] : this.on.dragSet ? this.on.dragSet(u.uid) : [u.uid];
+      this.drag = { kind: 'chips', uids, from: u.index, where: u.where, on: true, at: this.ground(e, 1) };
       this.view = null;
       const n = Math.min(4, uids.length);
       for (let i = 0; i < n; i++) {
-        const m = new THREE.Mesh(this.chipGeo, another(this.mat.chip, { map: i === n - 1 ? this.face(u.item.s, u.item.label) : null, edge: edgeColour(u.item.s), number: numberOf(u.uid) + i }));
+        const m = new THREE.Mesh(this.chipGeo, another(this.mat.chip, { map: i === n - 1 ? this.face(u.item.s, u.item.label, u.item.off) : null, edge: edgeColour(u.item.s), number: numberOf(u.uid) + i }));
         m.position.set(i * 0.05, i * (CT + 0.012), i * -0.04); m.castShadow = true; m.userData = { mat: true };
         this.held.add(m);
       }
@@ -904,7 +989,7 @@ export class Bench {
       this.held.rotation.set(0, 0, 0);
     } else return;
     this.canvas.style.cursor = 'grabbing';
-    this.place(false); this.poke();
+    this.place(false); this.placeColumn(false); this.poke();
   }
   moveDrag(e) {
     const d = this.drag;
@@ -913,8 +998,10 @@ export class Bench {
     const to = u.type === 'chip' ? { type: 'table', index: u.index } : u;
     const ok = this.on.canDrop ? this.on.canDrop(d, to) : true;
     d.to = ok ? to : null;
-    const gap = ok && to.type === 'table' && d.kind === 'chips' && this.on.orders?.() ? clamp(to.index, 0, this.lying().length) : -1;
+    const gap = ok && to.type === 'table' && d.kind === 'chips' && d.where !== 'column' && this.on.orders?.() ? clamp(to.index, 0, this.lying().length) : -1;
     if (gap !== this.gap) { this.gap = gap; this.place(false); }
+    const cg = ok && to.type === 'column' && d.kind === 'chips' ? clamp(to.index, 0, this.colLying().length) : -1;
+    if (cg !== this.colGap) { this.colGap = cg; this.placeColumn(false); }
     this.on.over?.(d, d.to);
     // near the top or the bottom of the table, it scrolls
     const r = this.canvas.getBoundingClientRect(), y = (e.clientY - r.top) / r.height;
@@ -925,18 +1012,31 @@ export class Bench {
   endDrag() {
     const d = this.drag;
     this.drag = null; this.view = null; this.clear(this.held); this.canvas.style.cursor = 'default';
-    const gap = this.gap; this.gap = -1;
-    this.place(false); this.poke();
-    if (d && d.to) this.on.drop?.(d, d.to.type === 'table' ? { ...d.to, index: gap >= 0 ? gap : d.to.index } : d.to);
+    const gap = this.gap, cg = this.colGap; this.gap = -1; this.colGap = -1;
+    this.place(false); this.placeColumn(false); this.poke();
+    if (d && d.to) this.on.drop?.(d, d.to.type === 'table' ? { ...d.to, index: gap >= 0 ? gap : d.to.index } : d.to.type === 'column' ? { ...d.to, index: cg >= 0 ? cg : d.to.index } : d.to);
     this.on.over?.(null, null);
   }
-  cancelDrag() { if (!this.drag) return; this.drag = null; this.view = null; this.gap = -1; this.clear(this.held); this.canvas.style.cursor = 'default'; this.place(false); this.poke(); this.on.over?.(null, null); }
+  cancelDrag() { if (!this.drag) return; this.drag = null; this.view = null; this.gap = -1; this.colGap = -1; this.clear(this.held); this.canvas.style.cursor = 'default'; this.place(false); this.placeColumn(false); this.poke(); this.on.over?.(null, null); }
   // Where things are in the window (client pixels): for the checks, which press and drag as a hand does.
   screenOf(x, y, z) {
     const v = new THREE.Vector3(x, y, z).project(this.camera), r = this.canvas.getBoundingClientRect();
     return { x: r.left + ((v.x + 1) / 2) * r.width, y: r.top + ((1 - v.y) / 2) * r.height };
   }
-  whereChip(index) { const p = this.spot(index); return this.screenOf(p.x, CT, p.z); }
+  whereChip(index) { const p = this.spot(index); return this.screenOf(p.x, CT, p.z - CD * 0.2); }       // (on its picture: its keys are along its foot)
+  // A key on a chip: the part's own (by its name), on the table's chip at that place or the column's.
+  whereKey(index, part, inColumn = false) {
+    const it = [...(inColumn ? this.colItems : this.items).values()].find((x) => x.index === index);
+    const r = it ? keyRects(it.s).find((k) => k.key === part) : null;
+    if (!r) return null;
+    const p = inColumn ? this.colSpot(index) : this.spot(index);
+    // (at the height it lies at: a chosen chip is lifted, and from this camera that is some pixels)
+    return this.screenOf(p.x + ((r.x + r.w / 2) / CARD_W - 0.5) * CW, (it.target ? it.target.y : CT / 2) + CT / 2, p.z + ((r.y + r.h / 2) / CARD_H - 0.5) * CD);
+  }
+  whereColumn(index = -1) {
+    const n = this.column ? this.column.chips.length : 0, p = this.colSpot(index < 0 ? n : index);
+    return this.screenOf(p.x, CT, p.z - (index < 0 ? 0 : CD * 0.2));
+  }
   wherePile(key, onPlate = false) {
     const h = (this.rackHits || []).find((p) => p.key === key);
     // (a knob's pile is pressed beside its module, where its top chip shows: on the module are its knobs, which turn)

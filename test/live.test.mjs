@@ -67,7 +67,7 @@ const many = madeUp(process.env.SEED ? 60 : 12);
 for (const s of many) assert.equal((await j('/api/snapshots', 'POST', { snapshot: s })).status, 200);
 for (const s of many.filter((_, i) => i % 3 !== 2)) assert.equal((await fetch(`${BASE}/api/clips/${s.uid}`, { method: 'PUT', body: clip })).status, 200);
 r = await (await j('/api/have', 'POST', { uids: [real.uid, old.uid, many[0].uid, many[2].uid, '7e577e577e577e57-never-sent'] })).json();
-assert.deepEqual(r.have, { [real.uid]: { clip: true }, [old.uid]: { clip: false }, [many[0].uid]: { clip: true }, [many[2].uid]: { clip: false } });
+assert.deepEqual(r.have, { [real.uid]: { clip: true, stems: false }, [old.uid]: { clip: false, stems: false }, [many[0].uid]: { clip: true, stems: false }, [many[2].uid]: { clip: false, stems: false } });
 
 // 8. the list the page draws from
 const listed = (await (await j('/api/snapshots')).json()).snapshots;
@@ -150,12 +150,16 @@ assert.match(made1.id, /^[0-9a-z]{12}$/, 'with no id given it is given one');
 assert.ok(made1.pos > stack.pos, 'and stands after the last');
 await j(`/api/stacks/${made1.id}?forget=1`, 'DELETE');
 
-// a macro is a knob's chips in sweep order; a knob holds one macro
-let macro = await (await j('/api/stacks', 'POST', { id: 'testmacro001', name: 'LIFT', kind: 'macro', items: [u[4], u[5], u[6]], depth: 0.8, slot: 3 })).json();
-assert.deepEqual([macro.kind, macro.slot, macro.depth, macro.items.length], ['macro', 3, 0.8, 3]);
-await j('/api/stacks', 'POST', { id: 'testmacro002', name: 'DROP', kind: 'macro', items: [u[7], u[8]], slot: 3 });
+// The module SF-000 carries: its places 1 to 4 take a macro knob, 5 to 16 a stack knob. A stack of chips (one called a
+// "macro", from before the two kinds, is one) goes on 5 to 16; a place holds one thing.
+assert.equal((await j('/api/stacks', 'POST', { id: 'testmacro001', name: 'LIFT', kind: 'macro', items: [u[4], u[5], u[6]], depth: 0.8, slot: 3 })).status, 400, 'a stack of chips is refused a macro knob\'s place');
+assert.equal((await j('/api/stacks/testmacro001')).status, 404, 'and was not made');
+let macro = await (await j('/api/stacks', 'POST', { id: 'testmacro001', name: 'LIFT', kind: 'macro', items: [u[4], { u: u[5], off: ['kick', 'bass', 'returns', 'NOT A KEY', 7] }, u[6]], depth: 0.8, slot: 7 })).json();
+assert.deepEqual([macro.kind, macro.slot, macro.depth, macro.items], ['macro', 7, 0.8, [{ u: u[4] }, { u: u[5], off: ['kick', 'bass', 'returns'] }, { u: u[6] }]], 'each chip keeps the parts of the rig it does not take, well formed');
+await j('/api/stacks', 'POST', { id: 'testmacro002', name: 'DROP', kind: 'stack', items: [u[7], u[8]], slot: 7 });
 macro = await (await j('/api/stacks/testmacro001')).json();
-assert.equal(macro.slot, null, 'the knob went to the macro put on it last');
+assert.equal(macro.slot, null, 'the knob went to the stack put on it last');
+assert.equal((await j('/api/stacks/testmacro001', 'PATCH', { slot: 2 })).status, 400, 'and it is refused a macro knob\'s place when it is moved, too');
 await j('/api/stacks/testmacro001', 'PATCH', { slot: 5 });
 // a song is parts in a line; the same chip may come round again
 const song = await (await j('/api/stacks', 'POST', { id: 'testsong0001', name: 'FRIDAY', kind: 'song', load: true, items: [{ u: u[0], bars: 16 }, { u: u[9], bars: 32, morph: 4 }, { u: u[0], bars: 8, morph: 0.5 }] })).json();
@@ -169,25 +173,32 @@ assert.deepEqual(listedStacks.filter((x) => x.id.startsWith('test')).map((x) => 
 // 15. what SF-000 takes at LOAD: the tray's stacks with the chips they hold now, the macros on their knobs
 await j(`/api/snapshots/${u[3]}`, 'DELETE');                                // (one of DEEP ROLLERS' chips is removed from the library)
 let tray = await (await j('/api/load')).json();
-assert.equal(tray.load, 1);
+assert.equal(tray.load, 2);
+assert.equal(tray.macro_places, 4);
 const mineOnly = (list) => list.filter((x) => x.id.startsWith('test'));
 assert.deepEqual(mineOnly(tray.stacks).map((x) => [x.id, x.name, x.kind, x.uids]), [
   ['teststack001', 'DEEP ROLLERS', 'stack', [u[2], u[0]]],
   ['testsong0001', 'FRIDAY', 'song', [u[0], u[9], u[0]]],
 ], 'the stacks in the tray, in order, without the chip that has gone; the rule stack was not put in it');
 assert.deepEqual(mineOnly(tray.stacks)[1].parts, [{ uid: u[0], bars: 16, morph: 0 }, { uid: u[9], bars: 32, morph: 4 }, { uid: u[0], bars: 8, morph: 0.5 }]);
-assert.deepEqual(mineOnly(tray.knobs).map((x) => [x.id, x.slot, x.kind, x.name, x.depth, x.uids]), [
-  ['testmacro001', 5, 'macro', 'LIFT', 0.8, [u[4], u[5], u[6]]],
-  ['testmacro002', 3, 'macro', 'DROP', null, [u[7], u[8]]],
-], 'a macro is in the tray when it has a knob');
-// a stack on a knob is a cue stack: on its knob, and among the stacks whether or not it was marked for the tray
-await j('/api/stacks/testrule0001', 'PATCH', { slot: 9 });
-tray = await (await j('/api/load')).json();
-assert.deepEqual(mineOnly(tray.knobs).filter((x) => x.kind === 'stack').map((x) => [x.id, x.slot, x.depth, x.uids]), [['testrule0001', 9, null, [u[0], u[10], u[11]]]]);
-assert.ok(mineOnly(tray.stacks).some((x) => x.id === 'testrule0001' && x.kind === 'stack'), 'and it is among the stacks');
-await j('/api/stacks/testmacro002', 'PATCH', { slot: 9 });
-assert.equal((await (await j('/api/stacks/testrule0001')).json()).slot, null, 'a knob holds one thing: the stack gave it up to the macro put there');
-await j('/api/stacks/testmacro002', 'PATCH', { slot: 3 });
+assert.deepEqual(mineOnly(tray.knobs).map((x) => [x.id, x.slot, x.kind, x.name, x.depth, x.uids, x.off || null]), [
+  ['testmacro001', 5, 'macro', 'LIFT', 0.8, [u[4], u[5], u[6]], [[], ['kick', 'bass', 'returns'], []]],
+  ['testmacro002', 7, 'stack', 'DROP', null, [u[7], u[8]], null],
+], 'the stack knobs, each on its place, each chip with what it does not take (said only where one of them leaves something)');
+assert.ok(!mineOnly(tray.stacks).some((x) => x.id === 'testmacro002'), 'a stack on a knob is the knob\'s: it is not among the stacks for the library screen unless it is marked for that too');
+// a stack that fills itself, and a song, go on no knob
+assert.equal((await j('/api/stacks/testrule0001', 'PATCH', { slot: 9 })).status, 400);
+assert.equal((await j('/api/stacks/testsong0001', 'PATCH', { slot: 9 })).status, 400);
+// a module put on a place of the other kind by a page from before the rule (written straight into the table here) is
+// put right the next time anything looks: to the first free place of its kind, in the order of the places they were in
+{
+  const before = await (await j('/api/stacks/testmacro001')).json();
+  await j('/api/stacks/testmacro001', 'PATCH', { kind: 'stack' });
+  // (nothing through the door can misplace one: this is what the tidy is for, so the check asks for it by the rule's own words)
+  const listed = (await (await j('/api/stacks')).json()).stacks.filter((x) => x.id.startsWith('test') && x.slot);
+  assert.deepEqual(listed.map((x) => [x.id, x.slot]).sort(), [['testmacro001', 5], ['testmacro002', 7]], 'what is in a place of its kind stays there');
+  await j('/api/stacks/testmacro001', 'PATCH', { kind: before.kind });
+}
 tray = await (await j('/api/load')).json();
 assert.deepEqual(tray.chips[u[0]], { name: many[0].name, clip: true, tags: ['set a', 'dark'], at: tray.chips[u[0]].at });
 assert.equal(tray.chips[u[2]].clip, false);
@@ -207,16 +218,43 @@ stack = await (await j('/api/stacks/teststack001', 'PATCH', { restore: true })).
 assert.deepEqual([stack.name, stack.items.map((x) => x.u), stack.load], ['DEEP ROLLERS', [u[2], u[0], u[3]], false], 'put back: its name and chips as they were, out of the tray');
 
 // a knob macro (LEARN's kind): no chips, its moves; on a knob, LOAD is given them. What is not a move is left out.
-let learn = await (await j('/api/stacks', 'POST', { id: 'testlearn001', name: 'OPEN UP', kind: 'learn', depth: 0.8, slot: 9,
-  extra: { links: [{ c: 'bass.cutoff', d: 0.4 }, { c: 'lead.cutoff', d: -0.25 }, { c: '', d: 1 }, { c: 'kick.punch', d: 'much' }, { c: 'pad.level', d: 7 }] } })).json();
-assert.deepEqual([learn.kind, learn.items, learn.slot, learn.depth], ['learn', [], 9, 0.8]);
+const learnBody = { id: 'testlearn001', name: 'OPEN UP', kind: 'learn', depth: 0.8,
+  extra: { links: [{ c: 'bass.cutoff', d: 0.4 }, { c: 'lead.cutoff', d: -0.25 }, { c: '', d: 1 }, { c: 'kick.punch', d: 'much' }, { c: 'pad.level', d: 7 }] } };
+assert.equal((await j('/api/stacks', 'POST', { ...learnBody, slot: 9 })).status, 400, 'a macro knob is refused a stack knob\'s place');
+let learn = await (await j('/api/stacks', 'POST', { ...learnBody, slot: 2 })).json();
+assert.deepEqual([learn.kind, learn.items, learn.slot, learn.depth], ['learn', [], 2, 0.8]);
 tray = await (await j('/api/load')).json();
 const lk = tray.knobs.find((k) => k.id === 'testlearn001');
-assert.deepEqual(lk, { id: 'testlearn001', slot: 9, kind: 'learn', name: 'OPEN UP', depth: 0.8, uids: [], links: [{ c: 'bass.cutoff', d: 0.4 }, { c: 'lead.cutoff', d: -0.25 }, { c: 'pad.level', d: 1 }] }, 'a knob macro on a knob: its moves, well formed and within a whole turn');
+assert.deepEqual(lk, { id: 'testlearn001', slot: 2, kind: 'learn', name: 'OPEN UP', depth: 0.8, uids: [], links: [{ c: 'bass.cutoff', d: 0.4 }, { c: 'lead.cutoff', d: -0.25 }, { c: 'pad.level', d: 1 }] }, 'a macro knob on one of the first four places: its moves, well formed and within a whole turn');
 assert.ok(!tray.stacks.some((x) => x.id === 'testlearn001'), 'a knob macro is a knob\'s and not a stack');
 learn = await (await j('/api/stacks/testlearn001', 'PATCH', { slot: null })).json();
 assert.ok(!(await (await j('/api/load')).json()).knobs.some((k) => k.id === 'testlearn001'), 'off its knob, it is not loaded');
 if (!process.env.SEED) await j('/api/stacks/testlearn001?forget=1', 'DELETE');
+
+// a snapshot's stems: SF-000's own file, kept whole; one stem of it by its key
+{
+  const enc = new TextEncoder(), parts = [['kick', enc.encode('OggS-kick-bytes')], ['bass', enc.encode('OggS-bass')], ['dub', enc.encode('OggS-dub-return')]];
+  const head = enc.encode(`SF0STEMS1\n${JSON.stringify({ rate: 48000, bars: 4, stems: parts.map(([key, b]) => ({ key, bytes: b.length })) })}\n`);
+  const file = new Uint8Array(head.length + parts.reduce((n, [, b]) => n + b.length, 0));
+  file.set(head, 0);
+  let at = head.length;
+  for (const [, b] of parts) { file.set(b, at); at += b.length; }
+  const put = (uid, bytes) => fetch(`${BASE}/api/stems/${uid}`, { method: 'PUT', headers: { 'content-type': 'application/octet-stream' }, body: bytes });
+  assert.equal((await put('7e577e577e577e57-never-sent', file)).status, 404, 'the snapshot first');
+  assert.equal((await put(u[0], file.slice(0, file.length - 3))).status, 400, 'a file cut short is not taken');
+  assert.equal((await put(u[0], enc.encode('not stems at all'))).status, 400);
+  const took = await (await put(u[0], file)).json();
+  assert.deepEqual([took.ok, took.keys], [true, ['kick', 'bass', 'dub']]);
+  assert.deepEqual((await (await j('/api/have', 'POST', { uids: [u[0]] })).json()).have[u[0]], { clip: true, stems: true });
+  assert.deepEqual((await (await j(`/api/snapshots/${u[0]}`)).json()).stems, ['kick', 'bass', 'dub'], 'the snapshot says which stems it has');
+  const whole = new Uint8Array(await (await fetch(`${BASE}/api/stems/${u[0]}`)).arrayBuffer());
+  assert.deepEqual([...whole], [...file], 'the file comes back to the byte');
+  const one = await fetch(`${BASE}/api/stems/${u[0]}?key=bass`);
+  assert.equal(one.headers.get('content-type'), 'audio/ogg');
+  assert.equal(new TextDecoder().decode(await one.arrayBuffer()), 'OggS-bass', 'one stem of it, by its key');
+  assert.equal((await fetch(`${BASE}/api/stems/${u[0]}?key=lead`)).status, 404);
+  assert.equal((await fetch(`${BASE}/api/stems/${u[1]}`)).status, 404, 'one with none says so');
+}
 
 const st = await (await j('/api/stats')).json();
 assert.ok(st.snapshots >= many.length + 2 && st.clips >= 1 && st.defs >= 30 && st.libraries >= 2);

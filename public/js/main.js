@@ -3,7 +3,8 @@
 // which stack is open, what is selected, and what each press and each drop means. Everything is
 // worked out here from two lists (the snapshots, the stacks); the server is asked only to keep a change.
 import { MEASURES, unpack } from './profile.js';
-import { when as whenText, setNight, moveName } from './card.js';
+import { when as whenText, setNight, moveName, partName } from './card.js';
+import * as stems from './stems.js';
 import { narrow } from './narrow.js';
 import * as rules from './stacks.js';
 import { Bench } from './bench.js';
@@ -21,6 +22,9 @@ const state = {
   selected: null, selectedN: 0, playing: null,
   marked: new Set(),
   sorted: null,             // AUTO SORT's piles, while they are out
+  off: new Map(),           // the keys put out on chips lying on the table from a pile that is not a stack of your own: uid -> [part, ...]
+  build: null,              // the stack knob in the column: its stack's id
+  where: 'table',           // where the selected chip was pressed: 'table' or 'column'
   armed: null,              // 'chip' or 'stack': REMOVE pressed once
   version: 0,               // goes up when the snapshots or the stacks change: what is worked out from them is kept until then
 };
@@ -51,7 +55,16 @@ function itemsOf(s) {
 }
 const allByTime = () => cached('all', () => [...state.all].sort((a, b) => rules.when(b) - rules.when(a)).map((s) => ({ u: s.uid })));
 const sittings = () => cached('sittings', () => rules.sittings(state.all));
-const KIND = { stack: '', macro: 'MACRO', song: 'SONG', rule: 'RULE', learn: 'KNOB' };
+const KIND = { stack: '', macro: 'STACK', song: 'SONG', rule: 'RULE', learn: 'MACRO' };
+// SF-000's snapshot module: its places 1 to 4 take a macro knob (a knob's moves), 5 to 16 a stack knob (chips in an order).
+const MACRO_PLACES = 4, STACK_MOST = 128;
+const placeKind = (slot) => (slot <= MACRO_PLACES ? 'macro' : 'stack');
+const plain = (s) => !!s && (s.kind === 'stack' || s.kind === 'macro');          // a stack of chips of your own (one called a macro, from before the two kinds, is one)
+const knobKindOf = (s) => (!s ? null : s.kind === 'learn' || (s.kind === 'macro' && !(s.items || []).length && linksOf(s).length) ? 'macro' : plain(s) ? 'stack' : null);
+const freePlace = (kind) => { for (let n = kind === 'macro' ? 1 : MACRO_PLACES + 1; n <= (kind === 'macro' ? MACRO_PLACES : 16); n++) if (!state.stacks.some((x) => x.slot === n)) return n; return 0; };
+const buildStack = () => (state.build ? state.stacks.find((x) => x.id === state.build && plain(x)) || null : null);
+const withOff = (it, off) => { const { off: was, ...rest } = it; void was; return off && off.length ? { ...rest, off } : rest; };
+const names = (parts) => parts.map(partName).join(', ');
 const sittingName = (sit) => `${whenText(sit.from)}`.replace(/\s+/g, ' ');
 
 // Every pile there is, by key: what the rack shows and what a press on one opens.
@@ -74,16 +87,18 @@ function pileList() {
   });
 }
 const pileOf = (key) => pileList().find((p) => p.key === key) || null;
-// What kind of knob a stack is, if it is one: a macro always (it sweeps), a stack once it is on a knob (it steps: a cue stack).
+// What kind of knob a stack is, if it is one: a macro knob (its moves) always; a stack of chips once it is on the module.
 function knobOf(s) {
-  const kind = s.kind === 'macro' ? 'macro' : s.kind === 'learn' ? 'learn' : s.slot && s.kind !== 'song' ? 'cue' : '';
+  const kind = knobKindOf(s) === 'macro' ? 'learn' : plain(s) && s.slot ? 'stack' : '';
   if (!kind) return null;
   const n = itemsOf(s).length, m = linksOf(s).length;
-  const count = kind === 'learn' ? `${m} MOVE${m === 1 ? '' : 'S'}` : `${n} CHIP${n === 1 ? '' : 'S'}${m ? ` +${m}` : ''}`;
+  const count = kind === 'learn' ? `${m} MOVE${m === 1 ? '' : 'S'}` : `${n} CHIP${n === 1 ? '' : 'S'}`;
   return { kind, slot: s.slot || 0, depth: s.depth === null || s.depth === undefined ? 1 : s.depth, count };
 }
 // In the tray: on one of its knobs (a macro, which sweeps, or a stack, which steps: a cue stack), or a stack marked for it.
-const inTray = (s) => !!s.slot || (s.kind !== 'macro' && s.kind !== 'learn' && !!s.load);
+// For SF-000: on the module (one of its sixteen knobs), or in the list under it (the stacks its own LIBRARY screen steps through).
+const inList = (s) => s.kind !== 'macro' && s.kind !== 'learn' && !!s.load;
+const inTray = (s) => !!s.slot || inList(s);
 const heatsOf = (items) => items.slice(0, 4000).map((it) => { const s = chip(it.u); return s && s.p ? s.p.bright : -1; });
 
 // ---------------------------------------------------------------- drawing: the rack, the tray, the table, the strips
@@ -99,9 +114,9 @@ function showRack() {
   bench.setRack(piles);
   const bays = Array.from({ length: 16 }, (_, i) => {
     const s = state.stacks.find((x) => x.slot === i + 1);
-    return s ? { key: `st:${s.id}`, name: s.name, sweeps: s.kind === 'macro', knob: knobOf(s), heats: heatsOf(itemsOf(s)), open: !!state.open && state.open.key === `st:${s.id}` } : { key: null, name: '' };
+    return s ? { key: `st:${s.id}`, name: s.name, knob: knobOf(s), heats: heatsOf(itemsOf(s)), open: (!!state.open && state.open.key === `st:${s.id}`) || state.build === s.id } : { key: null, name: '' };
   });
-  const loaded = state.stacks.filter((s) => s.kind !== 'macro' && s.kind !== 'learn' && inTray(s)).map((s) => ({ key: `st:${s.id}`, name: s.name || 'UNNAMED', count: itemsOf(s).length, heats: heatsOf(itemsOf(s)), open: !!state.open && state.open.key === `st:${s.id}` }));
+  const loaded = state.stacks.filter(inList).map((s) => ({ key: `st:${s.id}`, name: s.name || 'UNNAMED', count: itemsOf(s).length, heats: heatsOf(itemsOf(s)), open: !!state.open && state.open.key === `st:${s.id}` }));
   bench.setTray({ bays, stacks: loaded });
 }
 
@@ -120,9 +135,11 @@ function lay() {
     return;
   }
   const count = new Map();
+  const own = plain(o.stack);
   let list = here(o.items).map((it, i) => {
     const n = count.get(it.u) || 0; count.set(it.u, n + 1);
-    return { uid: it.u, s: chip(it.u), n, part: i, item: it };
+    // (its keys: in a stack of your own, what the stack says this chip takes; anywhere else, what was put out on it here, which goes with it into a stack)
+    return { uid: it.u, s: chip(it.u), n, part: i, item: it, off: o.kind === 'song' ? null : own ? it.off || [] : state.off.get(it.u) || [] };
   });
   const order = $('order').value, find = $('find').value.trim();
   if (find || order !== 'own') {
@@ -142,7 +159,28 @@ function showTable({ from = null, keepScroll = false } = {}) {
   showBar(); showChip(); showFoot();
 }
 
-function refresh(options = {}) { showRack(); showTable(options); }
+// The column: the stack knob being built, as its stack has it now.
+function showColumn() {
+  const b = buildStack();
+  if (state.build && !b) { state.build = null; try { localStorage.removeItem('sf-library-build'); } catch { /* no storage here */ } }
+  bench.setColumn(b ? { key: `st:${b.id}`, name: b.name, slot: b.slot || 0, chips: here(b.items).map((it) => ({ uid: it.u, s: chip(it.u), off: it.off || [] })) } : null);
+  const add = $('b-add'), name = $('b-name');
+  add.querySelector('span').textContent = b && b.slot ? `ON KNOB ${b.slot}: TAKE OFF` : 'ADD TO MODULE';
+  add.disabled = !b || !here(b.items).length;
+  add.setAttribute('aria-pressed', String(!!(b && b.slot)));
+  if (document.activeElement !== name) name.value = b ? up(b.name) : '';
+  name.disabled = !b;
+  $('b-new').disabled = !b;
+  $('b-kind').textContent = b && b.slot ? `KNOB ${b.slot}` : 'STACK KNOB';
+  $('b-count').textContent = String(b ? here(b.items).length : 0);
+}
+function setBuild(id) {
+  state.build = id || null;
+  try { if (id) localStorage.setItem('sf-library-build', id); else localStorage.removeItem('sf-library-build'); } catch { /* no storage here */ }
+  showRack(); showColumn();
+}
+
+function refresh(options = {}) { showRack(); showColumn(); showTable(options); }
 
 // ---------------------------------------------------------------- opening a stack
 function describe(p) {
@@ -186,7 +224,7 @@ function reopen({ keepScroll = true } = {}) {
 // ---------------------------------------------------------------- the bar: the open stack
 function showBar() {
   const o = state.open, s = o && o.stack;
-  const kinds = { all: 'LIBRARY', unsorted: 'LIBRARY', recent: 'LIBRARY', mood: 'MOOD', sit: 'SITTING', auto: 'SORTED', stack: 'STACK', macro: 'MACRO', song: 'SONG', rule: 'RULE', learn: 'KNOB MACRO' };
+  const kinds = { all: 'LIBRARY', unsorted: 'LIBRARY', recent: 'LIBRARY', mood: 'MOOD', sit: 'SITTING', auto: 'SORTED', stack: 'STACK', macro: 'STACK', song: 'SONG', rule: 'RULE', learn: 'MACRO KNOB' };
   $('s-kind').textContent = o ? (o.temp ? 'NEW' : kinds[o.kind] || 'STACK') : 'STACK';
   const name = $('s-name');
   if (document.activeElement !== name) name.value = o ? up(o.name) : '';
@@ -194,25 +232,25 @@ function showBar() {
   const n = state.shown.length, of = o ? (o.moves ? linksOf(o.stack).length : here(o.items).length) : 0;
   $('s-count').textContent = n === of ? String(of) : `${n} OF ${of}`;
   const load = $('s-load');
-  load.hidden = !!(s && s.kind === 'macro');
+  load.hidden = !!(s && (s.kind === 'macro' || s.kind === 'learn'));
   load.disabled = !s;
-  load.setAttribute('aria-pressed', String(!!s && inTray(s)));
-  const macro = (s && s.kind === 'macro') || (o && o.temp && o.kind === 'macro');
-  // (a knob holds a macro or a stack: a stack on a knob is a cue stack. DEPTH is a macro's.)
-  $('s-knob-field').hidden = !(s && s.kind !== 'song'); $('s-depth-field').hidden = !(s && (s.kind === 'macro' || s.kind === 'learn'));
-  if (s && s.kind !== 'song') $('s-knob').value = String(s.slot || 0);
-  if (s && (s.kind === 'macro' || s.kind === 'learn')) {
-    if (document.activeElement !== $('s-depth')) $('s-depth').value = s.depth === null || s.depth === undefined ? '' : String(Math.round(s.depth * 100));
+  load.setAttribute('aria-pressed', String(!!s && inList(s)));
+  // (the knob it is on: 1 to 4 for a macro knob, 5 to 16 for a stack knob. DEPTH is a macro knob's.)
+  const kk = knobKindOf(s);
+  $('s-knob-field').hidden = !kk; $('s-depth-field').hidden = kk !== 'macro';
+  if (kk) {
+    for (const op of $('s-knob').options) { const n = Number(op.value); op.hidden = op.disabled = n > 0 && placeKind(n) !== kk; }
+    $('s-knob').value = String(s.slot || 0);
   }
+  if (kk === 'macro' && document.activeElement !== $('s-depth')) $('s-depth').value = s.depth === null || s.depth === undefined ? '' : String(Math.round(s.depth * 100));
   // KEEP: what is out and not a stack of its own becomes one. FREEZE: a stack that fills itself stops.
   const keep = $('s-keep'), freeze = $('s-freeze');
   keep.disabled = !o || !!s || o.key === 'all' || !of;
-  keep.querySelector('span').textContent = o && o.temp ? (o.kind === 'macro' ? 'KEEP AS MACRO' : o.kind === 'song' ? 'KEEP AS SONG' : 'KEEP') : 'KEEP';
+  keep.querySelector('span').textContent = o && o.temp ? (o.kind === 'macro' ? 'KEEP AS STACK KNOB' : o.kind === 'song' ? 'KEEP AS SONG' : 'KEEP') : 'KEEP';
   freeze.disabled = !o || !of || !((s && s.kind === 'rule') || (o.temp && o.kind === 'rule') || o.kind === 'mood');
   const rm = $('s-remove');
   rm.disabled = !s;
   rm.setAttribute('aria-pressed', String(state.armed === 'stack'));
-  void macro;
 }
 
 async function patchStack(s, fields, done) {
@@ -245,7 +283,8 @@ function keepOpen() {
   const items = here(o.items).map((it) => ({ u: it.u, bars: it.bars, morph: it.morph }));
   const name = up($('s-name').value.trim() || o.name);
   if (o.temp && o.kind === 'song') return makeStack({ name, kind: 'song', items }, `KEPT AS A SONG OF ${items.length} PARTS. PUT IT ON THE CHASSIS AND SF-000 LOADS IT AS AN ARRANGEMENT.`);
-  if (o.temp && o.kind === 'macro') return makeStack({ name, kind: 'macro', items, depth: 1 }, 'KEPT AS A MACRO. GIVE IT A KNOB ABOVE, OR DRAG IT ONTO A POCKET OF THE CHASSIS.');
+  // (a stack for a knob: kept, and put in the column, where its chips' keys are set and ADD TO MODULE gives it a knob)
+  if (o.temp && o.kind === 'macro') return makeStack({ name, kind: 'stack', items: items.slice(0, STACK_MOST).map((it) => ({ u: it.u })) }, 'KEPT, AND IN THE COLUMN: SET EACH CHIP\'S KEYS THERE, THEN ADD TO MODULE.').then((made) => { if (made) setBuild(made.id); return made; });
   if (o.rule) return makeStack({ name, kind: 'rule', rule: o.rule, items }, 'KEPT. IT FILLS ITSELF AS SNAPSHOTS ARRIVE; FREEZE STOPS IT.');
   return makeStack({ name, kind: 'stack', items }, `KEPT AS A STACK OF ${items.length}.`);
 }
@@ -282,32 +321,70 @@ async function syncRules() {
 }
 
 // ---------------------------------------------------------------- hearing
-function press(uid, n = 0) {
+// What a chip does not take, where it lies: the column's chip by its stack, the table's as it is dealt.
+function offAt(uid, where = state.where) {
+  if (where === 'column') { const b = buildStack(), it = b && b.items.find((x) => x.u === uid); return (it && it.off) || []; }
+  const d = state.shown.find((x) => x.uid === uid);
+  return (d && d.off) || [];
+}
+function press(uid, n = 0, where = 'table') {
   const s = chip(uid);
   if (s && s.move) { select(uid, n); say(`${s.name}: THE KNOB'S WHOLE TURN TAKES IT ${s.move.d >= 0 ? 'UP' : 'DOWN'} ${Math.round(Math.abs(s.move.d) * 100)} OF ITS TRAVEL. SET IT IN AMOUNT.`); return; }
-  if (uid === state.selected && uid === state.playing) { stop(); return; }
-  select(uid, n);
+  if (uid === state.selected && uid === state.playing && where === state.where) { stop(); return; }
+  select(uid, n, where);
   play(uid);
 }
-function select(uid, n = 0) {
-  state.selected = uid; state.selectedN = n; state.armed = null;
+function select(uid, n = 0, where = 'table') {
+  state.selected = uid; state.selectedN = n; state.armed = null; state.where = where;
   if ($('order').value === 'like') showTable({ keepScroll: false });
   bench.setMarks({ selected: uid, playing: state.playing, marked: state.marked });
-  bench.reveal(uid);
+  if (where === 'table') bench.reveal(uid);
   showChip(); showFoot(); showBar();
   history.replaceState(null, '', uid ? `#${uid}` : '#');
 }
-function play(uid) {
+// Heard: whole, from its clip; or with keys put out on it, from its stems (each part of the rig on its own, the ones put out silent).
+async function play(uid, off = null) {
   const s = chip(uid);
   if (s && s.move) return;                          // (a move has no sound of its own)
   if (!s || !s.has_clip) { stop(); if (s) say('NO SOUND WAS KEPT WITH THIS ONE: IT WAS TAKEN WITH THE CLOCK STOPPED, OR ITS CLIP HAS NOT ARRIVED.'); return; }
+  const out = (off || offAt(uid)).filter((k) => k !== 'master');           // (the key is not something to hear)
   state.playing = uid;
+  audio.pause(); stems.stop();
+  marks(); showChip();
+  if (out.length && s.stems && s.stems.length) {
+    say(`${up(s.name)}: FETCHING ITS STEMS...`);
+    const ok = await stems.play(uid, out);
+    if (state.playing !== uid) { if (ok && stems.playing() === uid) stems.stop(); return; }          // (another was pressed meanwhile)
+    if (ok) { say(`PLAYING ${up(s.name)} WITHOUT ${names(out)}. CLICK IT AGAIN, OR PRESS SPACE, TO STOP.`); return; }
+  }
   audio.src = `/api/clips/${encodeURIComponent(uid)}`;
   audio.play().catch(() => { state.playing = null; marks(); showChip(); });
-  marks(); showChip();
-  say(`PLAYING ${up(s.name)}. CLICK IT AGAIN, OR PRESS SPACE, TO STOP.`);
+  say(!out.length ? `PLAYING ${up(s.name)}. CLICK IT AGAIN, OR PRESS SPACE, TO STOP.`
+    : `PLAYING ${up(s.name)} WHOLE: ${s.stems && s.stems.length ? 'ITS STEMS WOULD NOT PLAY HERE' : 'ITS STEMS ARE NOT IN THE LIBRARY (SF-000 SENDS THEM WHILE ONLINE IS LIT)'}. THE KEYS STILL SAY WHAT IT TAKES.`);
 }
-function stop() { state.playing = null; audio.pause(); marks(); showChip(); }
+function stop() { state.playing = null; audio.pause(); stems.stop(); marks(); showChip(); }
+// A key on a chip, pressed: that part of the rig is put out for it, or lit again. In a stack of your own (the column's, or
+// one dealt on the table) the stack keeps it; on a chip lying anywhere else it is kept here until the chip goes into a stack.
+function lane(uid, where, index, part) {
+  const s = chip(uid);
+  if (!s || s.move) return;
+  const flip = (was) => (was.includes(part) ? was.filter((k) => k !== part) : [...was, part]);
+  const o = state.open, st = where === 'column' ? buildStack() : o && plain(o.stack) ? o.stack : null;
+  let off;
+  if (st) {
+    const it = st.items.find((x) => x.u === uid);
+    if (!it) return;
+    off = flip(it.off || []);
+    patchStack(st, { items: st.items.map((x) => (x.u === uid ? withOff(x, off) : x)) });
+  } else if (where === 'table' && o && o.kind !== 'song') {
+    off = flip(state.off.get(uid) || []);
+    if (off.length) state.off.set(uid, off); else state.off.delete(uid);
+    showTable({ keepScroll: true });
+  } else return;
+  // (heard at once, if it is the one playing)
+  if (state.playing === uid && state.where === where) { if (stems.playing() === uid) stems.setOff(off.filter((k) => k !== 'master')); else if (off.length) play(uid, off); }
+  say(`${up(s.name)}: ${partName(part)} ${off.includes(part) ? 'PUT OUT. IT STAYS AS IT IS WHEN THIS SNAPSHOT COMES' : 'LIT. IT COMES WITH THIS SNAPSHOT'}${st ? '' : ' (IT GOES WITH THE CHIP INTO A STACK)'}.`);
+}
 // A knob macro from two marked chips: every knob of the rig that stands differently in the second than in the first, each
 // turned by as much as it differs. On a knob of SF-000 it makes that change from wherever the rig is (it is LEARN's kind of
 // knob: it holds moves, not snapshots).
@@ -321,7 +398,7 @@ async function knobMacro() {
       .map((c) => ({ c, d: Math.round((vb[c] - va[c]) * 1000) / 1000 })).sort((x, y) => Math.abs(y.d) - Math.abs(x.d)).slice(0, 64);
     if (!links.length) { say(`${up(chip(a).name)} AND ${up(chip(b).name)} HAVE EVERY KNOB IN THE SAME PLACE: THERE IS NOTHING FOR A KNOB MACRO TO MOVE.`); return; }
     makeStack({ name: `${up(chip(a).name)} TO ${up(chip(b).name)}`.slice(0, 40), kind: 'learn', items: [], depth: 1, extra: { links, from: [a, b] } },
-      `A KNOB MACRO OF ${links.length} MOVE${links.length === 1 ? '' : 'S'}: WHAT DIFFERS FROM ${up(chip(a).name)} TO ${up(chip(b).name)}. DROP IT IN A POCKET OF THE CHASSIS.`);
+      `A MACRO KNOB OF ${links.length} MOVE${links.length === 1 ? '' : 'S'}: WHAT DIFFERS FROM ${up(chip(a).name)} TO ${up(chip(b).name)}. DRAG IT ONTO ONE OF THE MODULE'S FIRST FOUR PLACES.`);
   } catch { say('THE TWO SNAPSHOTS COULD NOT BE READ. NOTHING WAS MADE.'); }
 }
 
@@ -342,7 +419,7 @@ function turned(key, which, v, done, moved) {
   const i = Math.min(items.length - 1, Math.round(v * (items.length - 1))), uid = items[i].u, c = chip(uid);
   if (state.playing !== uid && state.turnedTo !== uid) {
     state.turnedTo = uid;
-    play(uid);
+    play(uid, items[i].off || []);
     say(`${up(s.name)}: ${i + 1} OF ${items.length}${c ? `, ${up(c.name)}` : ''}${c && !c.has_clip ? ' (NO SOUND KEPT)' : ''}`);
   }
 }
@@ -462,7 +539,7 @@ function fromChip(type) {
     const uids = rules.knob(state.all, s);
     if (uids.length < 2) { say('ITS FAMILY IS TOO SMALL FOR A KNOB YET.'); return; }
     openTemp(`KNOB FROM ${up(s.name)}`, 'macro', uids.map((u) => ({ u })), null);
-    say('CALM TO FULL, IN SWEEP ORDER. KEEP AS MACRO, THEN GIVE IT A KNOB.');
+    say('CALM TO FULL, IN ORDER. KEEP AS STACK KNOB PUTS IT IN THE COLUMN.');
   }
 }
 
@@ -531,41 +608,81 @@ function autoSort() {
 }
 
 // ---------------------------------------------------------------- putting chips and stacks down
-function addTo(s, uids, at = -1) {
+function addTo(s, uids, at = -1, offs = null) {
   if (!s || s.kind === 'rule') return;
   const had = new Set(s.items.map((it) => it.u));
   const fresh = s.kind === 'song' ? uids : uids.filter((u) => !had.has(u));
   if (!fresh.length) { say(`ALREADY IN ${up(s.name)}.`); return; }
-  const add = fresh.map((u) => (s.kind === 'song' ? { u, bars: 16, morph: 4 } : { u }));
+  if (s.slot && s.items.length + fresh.length > STACK_MOST) { say(`A STACK KNOB HOLDS ${STACK_MOST} AT MOST.`); return; }
+  // (each goes in with the keys that were put out on it where it lay)
+  const add = fresh.map((u) => (s.kind === 'song' ? { u, bars: 16, morph: 4 } : withOff({ u }, offs ? offs.get(u) : null)));
   const items = at < 0 ? [...s.items, ...add] : [...s.items.slice(0, at), ...add, ...s.items.slice(at)];
   patchStack(s, { items }, `${fresh.length} PUT IN ${up(s.name)}.`);
 }
 const SEND_STACK = 'TO SF-000';          // the stack that chips dropped on the chassis go into
+// Why a thing cannot go on a place of the module, or '' if it can.
+function placeSays(s, slot) {
+  const want = placeKind(slot), is = knobKindOf(s);
+  if (!is) return 'A SONG OR A STACK THAT FILLS ITSELF GOES ON NO KNOB. FREEZE IT, OR DRAG ITS CHIPS.';
+  if (is !== want) return want === 'macro' ? 'PLACES 1 TO 4 TAKE MACRO KNOBS. A STACK GOES ON 5 TO 16.' : 'PLACES 5 TO 16 TAKE STACK KNOBS. A MACRO KNOB GOES ON 1 TO 4.';
+  return '';
+}
 function canDrop(d, to) {
   if (!to) return false;
   if (d.kind === 'chips') {
-    if (d.uids.some((u) => String(u).startsWith('move:'))) return false;          // (a knob macro's moves stay on it)
+    if (d.uids.some((u) => String(u).startsWith('move:'))) return false;          // (a macro knob's moves stay on it)
+    if (to.type === 'column') return true;                                           // (into the stack knob being built, or in its new place there)
+    if (d.where === 'column') {
+      // a chip of the column: put down anywhere off it, it is taken out of that stack; onto a stack, it goes into that one too
+      if (to.type === 'table' || to.type === 'rack' || to.type === 'tray') return true;
+      if (to.type === 'bay') { const on = stackOf(to.key); return placeKind(to.slot) === 'stack' && (!on || plain(on)); }
+      if (to.type === 'pile') { const s = stackOf(to.key); return to.key === 'new' || (!!s && plain(s) && s.id !== state.build); }
+      return false;
+    }
     if (to.type === 'table') return orders();
-    if (to.type === 'bay') { const on = stackOf(to.key); return !(on && on.kind === 'learn'); }     // (chips do not go into a knob macro)
+    if (to.type === 'bay') { const on = stackOf(to.key); return placeKind(to.slot) === 'stack' && (!on || plain(on)); }       // (chips make a stack knob, or go into the one there)
     if (to.type === 'tray') return true;                                             // (onto the chassis, under its knobs: these chips are for SF-000)
     if (to.type === 'pile') { const s = stackOf(to.key); return to.key === 'new' || (!!s && s.kind !== 'rule' && s.kind !== 'learn' && to.key !== (state.open && state.open.key)); }
     return false;
   }
-  // a whole pile: into the tray, onto a knob, or (from the tray) out of it
+  // a whole pile: onto the module, into the column, onto the chassis's list, or (from there) off it
   const s = stackOf(d.key), mood = d.key.startsWith('mood:');
-  if (to.type === 'bay') return !!s && s.kind !== 'song';              // (a macro, or a stack: on a knob it is a cue stack)
+  if (to.type === 'bay') return !!s && !placeSays(s, to.slot);
+  if (to.type === 'column') return plain(s);
   if (to.type === 'tray' || (to.type === 'pile' && to.inTray)) return (!!s && s.kind !== 'macro' && s.kind !== 'learn') || mood;
-  return !!s && inTray(s);                                    // dropped anywhere else: out of the tray
+  return !!s && inTray(s);                                    // dropped anywhere else: off the module
 }
 function drop(d, to) {
   if (d.kind === 'chips') {
     const uids = d.uids;
+    // (what each was not taking where it lay)
+    const offs = new Map(uids.map((u) => [u, offAt(u, d.where || 'table')]));
+    if (to.type === 'column') {
+      const b = buildStack();
+      if (!b) {
+        const n = state.stacks.filter((x) => /^STACK KNOB \d+$/.test(x.name || '')).length + 1;
+        makeStack({ name: `STACK KNOB ${n}`, kind: 'stack', items: uids.slice(0, STACK_MOST).map((u) => withOff({ u }, offs.get(u))) },
+          `A NEW STACK KNOB OF ${uids.length}. DRAG MORE IN, PUT THEM IN ORDER, SET EACH ONE'S KEYS, THEN ADD TO MODULE.`, { open: false }).then((made) => { if (made) setBuild(made.id); });
+        return;
+      }
+      const held = new Set(uids), rest = b.items.filter((it) => !held.has(it.u));
+      const moved = uids.map((u) => b.items.find((it) => it.u === u) || withOff({ u }, offs.get(u)));
+      if (rest.length + moved.length > STACK_MOST) { say(`A STACK KNOB HOLDS ${STACK_MOST} AT MOST.`); return; }
+      const at = Math.max(0, Math.min(rest.length, to.index));
+      patchStack(b, { items: [...rest.slice(0, at), ...moved, ...rest.slice(at)] }, d.where === 'column' ? 'PUT IN ITS NEW PLACE.' : `${uids.length} PUT IN ${up(b.name)}.`);
+      return;
+    }
+    if (d.where === 'column' && (to.type === 'table' || to.type === 'rack' || to.type === 'tray')) {
+      const b = buildStack(), held = new Set(uids);
+      if (b) patchStack(b, { items: b.items.filter((it) => !held.has(it.u)) }, `TAKEN OUT OF ${up(b.name)}. IT IS STILL IN THE LIBRARY.`);
+      return;
+    }
     if (to.type === 'table') {
       const o = state.open, held = new Set(uids);
       const rest = o.stack.items.filter((it) => !held.has(it.u)), moved = o.stack.items.filter((it) => held.has(it.u));
       patchStack(o.stack, { items: [...rest.slice(0, to.index), ...moved, ...rest.slice(to.index)] }, 'PUT IN ITS NEW PLACE.');
-    } else if (to.type === 'pile' && to.key === 'new') makeStack({ name: 'NEW STACK', items: uids }, `A NEW STACK OF ${uids.length}. PRESS IT TO DEAL IT OUT AND NAME IT.`, { open: false });       // (what was being looked through stays out)
-    else if (to.type === 'pile') addTo(stackOf(to.key), uids);
+    } else if (to.type === 'pile' && to.key === 'new') makeStack({ name: 'NEW STACK', items: uids.map((u) => withOff({ u }, offs.get(u))) }, `A NEW STACK OF ${uids.length}. PRESS IT TO DEAL IT OUT AND NAME IT.`, { open: false });       // (what was being looked through stays out)
+    else if (to.type === 'pile') addTo(stackOf(to.key), uids, -1, offs);
     else if (to.type === 'tray') {
       // chips dropped on the chassis itself: the ones SF-000 is to have. They go in one stack kept for that, which LOAD brings.
       const s = state.stacks.find((x) => x.kind === 'stack' && x.load && !x.slot && x.name === SEND_STACK);
@@ -574,18 +691,21 @@ function drop(d, to) {
     }
     else if (to.type === 'bay') {
       const s = stackOf(to.key);
-      if (s) addTo(s, uids);
-      // (chips on a knob are a cue stack: the knob steps through them. A macro is made on purpose, with MACRO or KNOB FROM THIS, and put on a knob.)
-      else makeStack({ name: `CUE ${to.slot}`, kind: 'stack', items: uids, slot: to.slot }, `A CUE STACK ON KNOB ${to.slot}: IN SF-000 THE KNOB STEPS THROUGH THESE, A TURN CUES ONE, A PRESS MORPHS TO IT. DRAG MORE ONTO IT.`, { open: false });
+      if (s) addTo(s, uids, -1, offs);
+      // (chips on one of the module's stack places are a stack knob. It is in the column too, to be put in order.)
+      else makeStack({ name: `STACK ${to.slot}`, kind: 'stack', items: uids.slice(0, STACK_MOST).map((u) => withOff({ u }, offs.get(u))), slot: to.slot },
+        `A STACK KNOB ON ${to.slot}: IN SF-000 ITS TURN MORPHS THE SET THROUGH THESE, OR WITH CUE LIT CHOOSES AMONG THEM. IT IS IN THE COLUMN: DRAG MORE IN.`, { open: false }).then((made) => { if (made) setBuild(made.id); });
     }
     return;
   }
   const s = stackOf(d.key);
-  // (a macro still called by its knob's number takes its new knob's)
-  if (to.type === 'bay' && s) patchStack(s, { slot: to.slot, ...(/^(KNOB|CUE) \d+$/.test(s.name) ? { name: `${s.name.split(' ')[0]} ${to.slot}` } : {}) }, `${up(s.name)} IS ON KNOB ${to.slot}${s.kind === 'macro' ? ': IT SWEEPS' : ': A CUE STACK, IT STEPS'}.`);
+  // (one still called by its knob's number takes its new knob's)
+  if (to.type === 'bay' && s) patchStack(s, { slot: to.slot, ...(/^(KNOB|CUE|STACK) \d+$/.test(s.name) ? { name: `${s.name.split(' ')[0]} ${to.slot}` } : {}) }, `${up(s.name)} IS ON KNOB ${to.slot}: ${placeKind(to.slot) === 'macro' ? 'A MACRO KNOB' : 'A STACK KNOB'}. LOAD ON SF-000 BRINGS IT.`);
+  else if (to.type === 'column' && s) { setBuild(s.id); say(`${up(s.name)} IS IN THE COLUMN: PUT ITS CHIPS IN ORDER, SET EACH ONE'S KEYS${s.slot ? '' : ', THEN ADD TO MODULE'}.`); }
   else if ((to.type === 'tray' || to.type === 'pile') && d.key.startsWith('mood:')) { const p = pileOf(d.key); makeStack({ name: p.name, kind: 'rule', rule: p.rule, items: p.items, load: true }, `${p.name} IS ON THE CHASSIS, AS A STACK THAT FILLS ITSELF.`, { open: false }); }
   else if ((to.type === 'tray' || (to.type === 'pile' && to.inTray)) && s) patchStack(s, { load: true }, `${up(s.name)} IS ON THE CHASSIS: SF-000 TAKES IT AT LOAD.`);
-  else if (s && inTray(s)) patchStack(s, s.kind === 'macro' ? { slot: null } : { load: false, slot: null }, `${up(s.name)} IS OFF THE CHASSIS.`);
+  else if (s && s.slot) patchStack(s, { slot: null }, `${up(s.name)} IS OFF THE MODULE. IT IS STILL IN THE RACK.`);
+  else if (s && inList(s)) patchStack(s, { load: false }, `${up(s.name)} IS OFF SF-000'S LIST. IT IS STILL IN THE RACK.`);
 }
 
 // ---------------------------------------------------------------- light or dark (D, as on the instrument)
@@ -615,11 +735,11 @@ function wire() {
     if (!o || !name) return;
     if (o.stack) patchStack(o.stack, { name }, `IT IS ${name} NOW.`); else if (o.temp) { o.name = name; showRack(); }
   });
-  $('s-load').addEventListener('click', () => { const s = state.open && state.open.stack; if (s) patchStack(s, inTray(s) ? { load: false, slot: null } : { load: true }, inTray(s) ? `${up(s.name)} IS OFF THE CHASSIS.` : `${up(s.name)} IS ON THE CHASSIS: SF-000 TAKES IT AT LOAD.`); });
+  $('s-load').addEventListener('click', () => { const s = state.open && state.open.stack; if (s) patchStack(s, { load: !inList(s) }, inList(s) ? `${up(s.name)} IS OFF SF-000'S LIST.` : `${up(s.name)} IS IN SF-000'S LIST: LOAD BRINGS IT TO ITS LIBRARY SCREEN.`); });
   const knobs = $('s-knob');
   knobs.append(new Option('NONE', '0'));
   for (let i = 1; i <= 16; i++) knobs.append(new Option(String(i), String(i)));
-  knobs.addEventListener('change', () => { const s = state.open && state.open.stack; if (s) { const slot = Number(knobs.value) || null; patchStack(s, { slot }, slot ? `${up(s.name)} IS ON KNOB ${slot}${s.kind === 'macro' ? ': IT SWEEPS' : ': A CUE STACK, IT STEPS'}.` : `${up(s.name)} IS ON NO KNOB.`); } });
+  knobs.addEventListener('change', () => { const s = state.open && state.open.stack; if (s) { const slot = Number(knobs.value) || null; const no = slot ? placeSays(s, slot) : ''; if (no) { say(no); showBar(); return; } patchStack(s, { slot }, slot ? `${up(s.name)} IS ON KNOB ${slot}: ${placeKind(slot) === 'macro' ? 'A MACRO KNOB' : 'A STACK KNOB'}.` : `${up(s.name)} IS ON NO KNOB.`); } });
   $('s-depth').addEventListener('change', () => { const s = state.open && state.open.stack; if (s) patchStack(s, { depth: Math.max(0, Math.min(100, Number($('s-depth').value) || 0)) / 100 }, 'DEPTH KEPT.'); });
   $('s-keep').addEventListener('click', keepOpen);
   $('s-freeze').addEventListener('click', freezeOpen);
@@ -636,7 +756,24 @@ function wire() {
   $('delete').addEventListener('click', () => removeChips(state.marked.has(state.selected) ? markedInOrder() : [state.selected]));
 
   $('m-stack').addEventListener('click', () => makeStack({ name: 'NEW STACK', items: markedInOrder() }, `A STACK OF THE ${state.marked.size} MARKED. NAME IT ABOVE.`));
-  $('m-macro').addEventListener('click', () => makeStack({ name: 'NEW MACRO', kind: 'macro', items: markedInOrder(), depth: 1 }, 'A MACRO OF THE MARKED, IN THE ORDER THEY LAY. GIVE IT A KNOB ABOVE.'));
+  // STACK KNOB: the marked chips, in the order they lie, as a new stack knob in the column (each with the keys put out on it)
+  $('m-macro').addEventListener('click', () => {
+    const uids = markedInOrder().slice(0, STACK_MOST);
+    if (!uids.length) return;
+    const n = state.stacks.filter((x) => /^STACK KNOB \d+$/.test(x.name || '')).length + 1;
+    makeStack({ name: `STACK KNOB ${n}`, kind: 'stack', items: uids.map((u) => withOff({ u }, offAt(u, 'table'))) }, 'A STACK KNOB OF THE MARKED, IN THE ORDER THEY LAY. IT IS IN THE COLUMN: SET EACH ONE\'S KEYS, THEN ADD TO MODULE.', { open: false }).then((made) => { if (made) setBuild(made.id); });
+  });
+  // the column's own keys
+  $('b-add').addEventListener('click', () => {
+    const b = buildStack();
+    if (!b) return;
+    if (b.slot) { patchStack(b, { slot: null }, `${up(b.name)} IS OFF THE MODULE. IT IS STILL IN THE COLUMN, AND IN THE RACK.`); return; }
+    const n = freePlace('stack');
+    if (!n) { say('ALL TWELVE STACK KNOBS ARE TAKEN. DRAG ONE OFF THE MODULE FIRST.'); return; }
+    patchStack(b, { slot: n }, `${up(b.name)} IS ON KNOB ${n}. LOAD, ON SF-000'S SNAPSHOT MODULE, BRINGS IT.`);
+  });
+  $('b-new').addEventListener('click', () => { const b = buildStack(); setBuild(null); say(`AN EMPTY COLUMN: THE FIRST CHIP PUT DOWN BEGINS A NEW STACK KNOB.${b ? ` ${up(b.name)} IS IN THE RACK${b.slot ? `, AND ON KNOB ${b.slot}` : ''}.` : ''}`); });
+  $('b-name').addEventListener('change', () => { const b = buildStack(), name = up($('b-name').value.trim()); if (b && name) patchStack(b, { name }, `IT IS ${name} NOW.`); });
   $('m-learn').addEventListener('click', knobMacro);
   $('c-amount').addEventListener('change', () => {
     const o = state.open, s = chip(state.selected);
@@ -671,9 +808,22 @@ function wire() {
 function startBench() {
   try {
     bench = new Bench($('bench'), {
-      chip: (uid, index, { shift }) => { const d = state.shown[index]; if (shift) toggleMark(uid); else press(uid, d ? d.n : 0); },
+      chip: (uid, index, { shift, where }) => { const d = where === 'column' ? null : state.shown[index]; if (shift && where !== 'column') toggleMark(uid); else press(uid, d ? d.n : 0, where || 'table'); },
+      lane,
       pile: (key) => openPile(key),
-      bay: (slot, key) => { if (key) openPile(key); else say(`KNOB ${slot} HOLDS NOTHING. DRAG CHIPS ONTO IT FOR A CUE STACK, OR A MACRO ONTO IT.`); },
+      // (a stack knob pressed on the module comes into the column, where it is built; it is dealt out too, as any stack is)
+      bay: (slot, key) => {
+        const s = stackOf(key);
+        if (s && plain(s)) setBuild(s.id);
+        if (key) openPile(key);
+        else say(placeKind(slot) === 'macro' ? `KNOB ${slot} HOLDS NOTHING. IT TAKES A MACRO KNOB: DRAG ONE ONTO IT (KNOB MACRO MAKES ONE FROM TWO MARKED CHIPS; LEARN ON SF-000 MAKES ONE THERE).` : `KNOB ${slot} HOLDS NOTHING. IT TAKES A STACK KNOB: DRAG CHIPS OR A STACK ONTO IT, OR BUILD ONE IN THE COLUMN AND ADD TO MODULE.`);
+      },
+      hover: (h) => {
+        if (!h || h.type !== 'chip' || !h.lane) return;
+        const s = chip(h.uid), out = offAt(h.uid, h.where).includes(h.lane);
+        if (s && !s.move) say(`${up(s.name)}: ${partName(h.lane)} ${out ? 'IS PUT OUT. CLICK TO LIGHT IT' : 'COMES WITH IT. CLICK TO PUT IT OUT'}.`);
+      },
+      columnAt: ({ x, y, w }) => { const b = $('build'); b.style.left = `${Math.round(x)}px`; b.style.top = `${Math.round(y)}px`; b.style.width = `${Math.max(120, Math.round(w))}px`; b.hidden = false; },
       dragSet: (uid) => (state.marked.has(uid) ? markedInOrder() : [uid]),
       turn: turned,
       rows: ({ first, shown, rows, y }) => {
@@ -687,9 +837,9 @@ function startBench() {
       canDrop, drop, orders,
       over: (d, to) => {
         if (!d) return;
-        if (!to) { say(d.kind === 'chips' ? 'DROP ON A STACK, ON THE CHASSIS (A POCKET: A CUE STACK ON THAT KNOB; UNDER THEM: FOR LOAD), OR ON + NEW STACK.' : 'DROP ON THE CHASSIS TO LOAD IT, OR ON A KNOB: A MACRO SWEEPS, A STACK STEPS.'); return; }
-        const s = to.type === 'pile' ? stackOf(to.key) : null;
-        say(to.type === 'bay' ? `ON KNOB ${to.slot}` : to.type === 'table' ? 'HERE' : to.type === 'tray' ? 'ONTO THE CHASSIS' : s ? `INTO ${up(s.name)}` : to.key === 'new' ? 'A NEW STACK' : '');
+        if (!to) { say(d.kind === 'chips' ? 'DROP IN THE COLUMN (THE STACK KNOB BEING BUILT), ON A STACK, ON ONE OF THE MODULE\'S PLACES 5 TO 16, OR ON + NEW STACK.' : 'DROP ON THE MODULE (A MACRO KNOB ON 1 TO 4, A STACK ON 5 TO 16), OR IN THE COLUMN TO BUILD IT.'); return; }
+        const s = to.type === 'pile' ? stackOf(to.key) : null, b = buildStack();
+        say(to.type === 'bay' ? `ON KNOB ${to.slot}` : to.type === 'column' ? (d.kind === 'pile' ? 'INTO THE COLUMN, TO BUILD IT' : b ? `INTO ${up(b.name)}, HERE` : 'A NEW STACK KNOB') : to.type === 'table' ? (d.where === 'column' ? 'OUT OF THE STACK KNOB' : 'HERE') : to.type === 'rack' && d.where === 'column' ? 'OUT OF THE STACK KNOB' : to.type === 'tray' ? (d.where === 'column' ? 'OUT OF THE STACK KNOB' : 'ONTO THE CHASSIS') : s ? `INTO ${up(s.name)}` : to.key === 'new' ? 'A NEW STACK' : '');
       },
     });
   } catch (e) {
@@ -711,6 +861,7 @@ async function start() {
     state.all = snaps.snapshots.map((s) => ({ ...s, p: unpack(s.profile) }));
     state.byUid = new Map(state.all.map((s) => [s.uid, s]));
     state.stacks = stacks.stacks;
+    try { state.build = localStorage.getItem('sf-library-build') || null; } catch { state.build = null; }
     changed();
     await (document.fonts ? document.fonts.ready : Promise.resolve());
     await Promise.all(['600 15px "Barlow Condensed"', '500 11.5px "Barlow Semi Condensed"'].map((f) => (document.fonts ? document.fonts.load(f) : null)));

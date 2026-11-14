@@ -3,7 +3,27 @@
 // bright, the spectrum's shape, where the hits fall in the bar, and how much of each lane.
 import { heat } from './profile.js';
 
-export const CARD_W = 272, CARD_H = 66;
+export const CARD_W = 272, CARD_H = 82;
+// The parts of the rig a snapshot can be taken with, as SF-000's RECALL TAKES keys have them: its
+// lanes in their order, then the returns, the drum bus and the key (the master). A chip carries a
+// key for each along its foot: lit, that part comes from the snapshot; put out, it is left alone.
+export const LANES = ['kick', 'closed_hat', 'open_hat', 'clap', 'perc', 'bass', 'rumble', 'lead', 'chord', 'pad', 'voice'];
+export const LANE_NAMES = { kick: 'KICK', closed_hat: 'CLOSED HAT', open_hat: 'OPEN HAT', clap: 'CLAP', perc: 'PERC', bass: 'BASS', rumble: 'RUMBLE', lead: 'LEAD', chord: 'CHORD', pad: 'PAD', voice: 'VOICE', returns: 'THE RETURNS', bus: 'THE DRUM BUS', master: 'THE KEY' };
+const REST = ['returns', 'bus', 'master'], REST_MARK = { returns: 'R', bus: 'B', master: 'K' };
+export const partsOf = (s) => [...((s && s.lanes && s.lanes.length ? s.lanes : LANES).slice(0, 11)), ...REST];
+export const partName = (k) => LANE_NAMES[k] || String(k).replace(/_/g, ' ').toUpperCase();
+const KEY_Y = 64, KEY_H = 12, KEY_W = 16, KEY_GAP = 2, KEY_X = 6;
+// Where each part's key is on the card: [{ key, x, y, w, h }], in the card's own units.
+export function keyRects(s) {
+  const parts = partsOf(s), lanes = parts.length - REST.length;
+  return parts.map((key, i) => ({ key, x: KEY_X + i * (KEY_W + KEY_GAP) + (i >= lanes ? 8 : 0), y: KEY_Y, w: KEY_W, h: KEY_H }));
+}
+// The part whose key is at that place on the card (a little round each counts: they are small), or null.
+export function keyAt(s, x, y) {
+  if (!s || s.move || y < KEY_Y - 3 || y > KEY_Y + KEY_H + 4) return null;
+  const hit = keyRects(s).find((r) => x >= r.x - KEY_GAP / 2 && x <= r.x + r.w + KEY_GAP / 2);
+  return hit ? hit.key : null;
+}
 export const COL = {
   putty: '#CFC8BC', grey: '#ABACA7', bluegrey: '#A4B1B7', sea: '#8D9794', white: '#E8E5E1', black: '#2B2B28',
   green: '#428F47', red: '#B54142', amber: '#C5843F', yellow: '#D7C352', lit: '#E9E6E2',
@@ -47,18 +67,36 @@ export function drawCard(canvas, s, index, flags = {}) {
 // A chip's face for the bench: the card's print alone on a canvas of its own, `scale` pixels to
 // the card's one, clear wherever nothing is printed (the chip itself is the card's ground: a plate,
 // with a plate's own wear showing between the print).
-export function faceCanvas(s, index, scale = 2) {
+export function faceCanvas(s, index, scale = 2, off = null) {
   const canvas = document.createElement('canvas');
   canvas.width = Math.round(CARD_W * scale); canvas.height = Math.round(CARD_H * scale);
   const g = canvas.getContext('2d');
   g.setTransform(scale, 0, 0, scale, 0, 0);
-  paintCard(g, s, index, { bare: true });
+  paintCard(g, s, index, { bare: true, off });
   return canvas;
+}
+
+// The keys along a chip's foot: one for each part of the rig. A lit one is a bright cap, with how
+// much of that lane the snapshot plays standing in it; one put out is dim and empty.
+function paintKeys(g, s, off) {
+  const out = new Set(off || []), p = s.p, fill = s.fill || [];
+  g.font = '600 9.5px "Barlow Condensed", sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  keyRects(s).forEach((r, i) => {
+    const on = !out.has(r.key);
+    g.fillStyle = COL.black; g.fillRect(r.x - 0.5, r.y - 0.5, r.w + 1, r.h + 1);
+    g.fillStyle = on ? COL.lit : night ? NIGHT.keyOff : COL.sea; g.fillRect(r.x + 0.5, r.y + 0.5, r.w - 1, r.h - 1);
+    if (REST_MARK[r.key]) { g.fillStyle = on ? COL.black : night ? NIGHT.dim : COL.grey; g.fillText(REST_MARK[r.key], r.x + r.w / 2, r.y + r.h / 2 + 0.5); return; }
+    if (!on) return;
+    const v = Math.max(0, Math.min(1, Number(p && p.lanes && p.lanes.length ? p.lanes[i] : fill[i]) || 0));
+    const h = Math.round(v * (r.h - 3));
+    g.fillStyle = COL.black; g.fillRect(r.x + 2.5, r.y + r.h - 1.5 - h, r.w - 5, h);
+  });
+  g.textAlign = 'left';
 }
 
 // The card itself, on any context already scaled so that it is CARD_W by CARD_H. index: its
 // number where it lies (0 the first), or a string to print in the number's place, or null for none.
-export function paintCard(g, s, index, { selected = false, playing = false, marked = false, bare = false } = {}) {
+export function paintCard(g, s, index, { selected = false, playing = false, marked = false, bare = false, off = null } = {}) {
   g.textBaseline = 'middle';
   const c = ink();
   if (s.move) { paintMove(g, s, index, c); return; }
@@ -68,6 +106,8 @@ export function paintCard(g, s, index, { selected = false, playing = false, mark
     const inset = selected ? 4 : 1;
     g.fillStyle = c.ground; g.fillRect(inset, inset, CARD_W - 2 * inset, CARD_H - 2 * inset);
   }
+  paintKeys(g, s, off);
+  g.textBaseline = 'middle';
 
   const x0 = 6, y0 = 6;
   g.font = LEGEND;

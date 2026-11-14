@@ -6,6 +6,7 @@ import { SCHEMA, ADDED } from './schema.js';
 
 const MAX_JSON = 2 * 1024 * 1024;       // a snapshot with the definitions it names
 const MAX_CLIP = 8 * 1024 * 1024;       // four bars of Ogg are a few hundred kilobytes
+const MAX_STEMS = 48 * 1024 * 1024;     // a snapshot's stems: a few bars of Ogg for each lane, the returns and the drum bus
 const MAX_LIST = 5000;
 const UID = /^[0-9a-f]{16}-[0-9A-Za-z_.-]{1,64}$/;
 const PRINT = /^[0-9a-f]{16}$/;
@@ -17,6 +18,16 @@ const linksOf = (s) => (s.extra && Array.isArray(s.extra.links) ? s.extra.links 
   .filter((l) => l && typeof l.c === 'string' && l.c.length > 0 && l.c.length <= 80 && Number.isFinite(Number(l.d)))
   .slice(0, 64).map((l) => ({ c: l.c, d: Math.max(-1, Math.min(1, Number(l.d))) }));
 const MAX_ITEMS = 5000;                 // chips in one stack
+// The module SF-000 carries (its sixteen snapshot knobs): places 1 to 4 take a macro knob (kind
+// "learn": a knob's moves, no chips), places 5 to 16 a stack knob (chips in an order, each with
+// the parts of the rig it takes). A "macro" from before the two kinds is a stack if it has chips.
+const MACRO_PLACES = 4;
+const placeKind = (slot) => (slot <= MACRO_PLACES ? 'macro' : 'stack');
+const knobKind = (s) => (s.kind === 'learn' || (s.kind === 'macro' && !s.items.length && linksOf(s).length) ? 'macro'
+  : s.kind === 'stack' || s.kind === 'macro' ? 'stack' : null);                 // (null: a song or a rule stack goes on no knob)
+// The parts of the rig a chip of a stack does not take: a lane by its key, then "returns", "bus",
+// "master". Only what is well formed, 32 at most.
+const offOf = (it) => (it && Array.isArray(it.off) ? [...new Set(it.off.filter((k) => typeof k === 'string' && /^[a-z0-9_]{1,40}$/.test(k)))].slice(0, 32) : []);
 // A snapshot from before it said which lanes it had: SF-000's eleven, in its order.
 const FIRST_LANES = ['kick', 'closed_hat', 'open_hat', 'clap', 'perc', 'bass', 'rumble', 'lead', 'chord', 'pad', 'voice'];
 
@@ -84,6 +95,13 @@ async function route(request, env, url) {
   if (p === '/api/stacks' && m === 'GET') return stacks(env, url.searchParams.get('removed') === '1');
   if (p === '/api/stacks' && m === 'POST') return makeStack(request, env);
   if (p === '/api/load' && m === 'GET') return load(env);
+  const st = p.match(/^\/api\/stems\/([^/]+)$/);
+  if (st) {
+    const uid = decodeURIComponent(st[1]);
+    if (!UID.test(uid)) return json({ error: 'not a uid' }, 400);
+    if (m === 'PUT') return receiveStems(request, env, uid);
+    if (m === 'GET' || m === 'HEAD') return serveStems(request, env, uid, url.searchParams.get('key'));
+  }
 
   let hit = p.match(/^\/api\/snapshots\/([^/]+)$/);
   if (hit) {
@@ -229,6 +247,64 @@ async function receiveClip(request, env, uid) {
   return json({ ok: true, uid, size: bytes.byteLength });
 }
 
+// A snapshot's stems, as SF-000 keeps them: "SF0STEMS1\n", a line of JSON ({ rate, bars, stems:
+// [{ key, bytes }] }), then the stems one after another, each an Ogg file. Kept whole; what it
+// holds is written beside the snapshot so the page can ask for one stem by its key.
+const STEMS_MARK = 'SF0STEMS1\n';
+export function readStemsHead(bytes) {
+  const u8 = new Uint8Array(bytes);
+  const mark = new TextDecoder().decode(u8.subarray(0, STEMS_MARK.length));
+  if (mark !== STEMS_MARK) return null;
+  let end = -1;
+  for (let i = STEMS_MARK.length; i < Math.min(u8.length, STEMS_MARK.length + 16384); i++) if (u8[i] === 10) { end = i; break; }
+  if (end < 0) return null;
+  let head;
+  try { head = JSON.parse(new TextDecoder().decode(u8.subarray(STEMS_MARK.length, end))); } catch { return null; }
+  if (!head || !Array.isArray(head.stems) || !head.stems.length || head.stems.length > 64) return null;
+  const stems = [];
+  let at = end + 1;
+  for (const st of head.stems) {
+    const n = Number(st && st.bytes);
+    if (!st || typeof st.key !== 'string' || !/^[a-z0-9_]{1,40}$/.test(st.key) || !Number.isInteger(n) || n <= 0) return null;
+    stems.push({ key: st.key, at, bytes: n });
+    at += n;
+  }
+  if (at !== u8.length) return null;                                    // (cut short, or something after the last)
+  return { rate: Number(head.rate) || 0, bars: Number(head.bars) || 0, stems };
+}
+
+async function receiveStems(request, env, uid) {
+  if (lacking.has('snapshots.stems')) return json({ error: 'this library cannot keep stems' }, 501);
+  const row = await env.DB.prepare('SELECT deleted_at FROM snapshots WHERE uid = ?').bind(uid).first();
+  if (!row) return json({ error: 'send the snapshot first' }, 404);
+  if (row.deleted_at) return json({ ok: true, uid, gone: true });
+  if (Number(request.headers.get('content-length') || 0) > MAX_STEMS) return json({ error: 'too large' }, 413);
+  const bytes = await request.arrayBuffer();
+  if (bytes.byteLength > MAX_STEMS) return json({ error: 'too large' }, 413);
+  const head = readStemsHead(bytes);
+  if (!head) return json({ error: 'not a stems file' }, 400);
+  await env.BUCKET.put(`stems/${uid}`, bytes, { httpMetadata: { contentType: 'application/octet-stream' } });
+  await env.DB.prepare('UPDATE snapshots SET stems = ?, updated_at = ? WHERE uid = ?').bind(JSON.stringify(head), Date.now(), uid).run();
+  return json({ ok: true, uid, size: bytes.byteLength, keys: head.stems.map((x) => x.key) });
+}
+
+// The whole file, or with ?key= one stem of it (an Ogg file).
+async function serveStems(request, env, uid, key) {
+  const row = lacking.has('snapshots.stems') ? null : await env.DB.prepare('SELECT stems FROM snapshots WHERE uid = ? AND deleted_at IS NULL').bind(uid).first();
+  let head = null;
+  try { head = row && row.stems ? JSON.parse(row.stems) : null; } catch { head = null; }
+  if (!head) return json({ error: 'no stems' }, 404);
+  const one = key ? head.stems.find((x) => x.key === key) : null;
+  if (key && !one) return json({ error: 'no such stem' }, 404);
+  const name = `stems/${uid}`;
+  const headers = new Headers({ 'content-type': one ? 'audio/ogg' : 'application/octet-stream', 'cache-control': 'private, max-age=31536000, immutable' });
+  if (request.method === 'HEAD') { const o = await env.BUCKET.head(name); if (!o) return json({ error: 'no stems' }, 404); headers.set('content-length', String(one ? one.bytes : o.size)); return new Response(null, { headers }); }
+  const obj = await env.BUCKET.get(name, one ? { range: { offset: one.at, length: one.bytes } } : undefined);
+  if (!obj) return json({ error: 'no stems' }, 404);
+  headers.set('content-length', String(one ? one.bytes : obj.size));
+  return new Response(obj.body, { headers });
+}
+
 // Body: { "uids": [...] }. Answers which of them are here, and which have their clip, so SF-000
 // can catch up after time offline with one question. A snapshot removed here is "gone": known, not wanted again.
 async function have(request, env) {
@@ -237,8 +313,8 @@ async function have(request, env) {
   const out = {};
   for (let i = 0; i < uids.length; i += 80) {
     const part = uids.slice(i, i + 80);
-    const { results } = await env.DB.prepare(`SELECT uid, has_clip, deleted_at FROM snapshots WHERE uid IN (${part.map(() => '?').join(',')})`).bind(...part).all();
-    for (const r of results) out[r.uid] = r.deleted_at ? { gone: true } : { clip: !!r.has_clip };
+    const { results } = await env.DB.prepare(`SELECT uid, has_clip, ${stemsColumn()}, deleted_at FROM snapshots WHERE uid IN (${part.map(() => '?').join(',')})`).bind(...part).all();
+    for (const r of results) out[r.uid] = r.deleted_at ? { gone: true } : { clip: !!r.has_clip, stems: !!r.stems };
   }
   return json({ have: out });
 }
@@ -249,10 +325,15 @@ async function have(request, env) {
 const LIST_COLUMNS = `uid, library_id, local_id, name, taken_at, received_at, app, has_profile, energy, weight, bright, density, tone,
   movement, wet, bpm, bars, profile_v, profile, lanes, fill, effects, has_clip, clip_size, tags, notes`;
 
+// (a library whose table could not be given the column answers as one with no stems)
+const stemsColumn = () => (lacking.has('snapshots.stems') ? 'NULL AS stems' : 'stems');
+
 function shape(r) {
   const parse = (t, d) => { try { return t ? JSON.parse(t) : d; } catch { return d; } };
+  const stems = parse(r.stems, null);
   return {
     ...r,
+    stems: stems && Array.isArray(stems.stems) ? stems.stems.map((x) => x.key) : [],      // (the keys of the stems it has: a lane's, "dub", "space", "bus")
     has_profile: !!r.has_profile, has_clip: !!r.has_clip,
     profile: parse(r.profile, null), fill: parse(r.fill, []),
     lanes: r.lanes ? r.lanes.split(',') : [], effects: r.effects ? r.effects.split(',') : [],
@@ -266,13 +347,13 @@ async function list(env, url) {
   const limit = Math.max(1, Math.min(MAX_LIST, Number(url.searchParams.get('limit')) || MAX_LIST));
   const offset = Math.max(0, Number(url.searchParams.get('offset')) || 0);
   const { results } = await env.DB.prepare(
-    `SELECT ${LIST_COLUMNS} FROM snapshots WHERE deleted_at IS NULL ORDER BY COALESCE(taken_at, received_at) DESC, uid LIMIT ? OFFSET ?`)
+    `SELECT ${LIST_COLUMNS}, ${stemsColumn()} FROM snapshots WHERE deleted_at IS NULL ORDER BY COALESCE(taken_at, received_at) DESC, uid LIMIT ? OFFSET ?`)
     .bind(limit, offset).all();
   return json({ snapshots: results.map(shape) });
 }
 
 async function one(env, uid) {
-  const row = await env.DB.prepare(`SELECT ${LIST_COLUMNS}, prints, json_size FROM snapshots WHERE uid = ? AND deleted_at IS NULL`).bind(uid).first();
+  const row = await env.DB.prepare(`SELECT ${LIST_COLUMNS}, ${stemsColumn()}, prints, json_size FROM snapshots WHERE uid = ? AND deleted_at IS NULL`).bind(uid).first();
   if (!row) return json({ error: 'not found' }, 404);
   const obj = await env.BUCKET.get(`snapshots/${uid}.json`);
   return json({ ...shape(row), prints: row.prints ? row.prints.split(',') : [], snapshot: obj ? await obj.json() : null });
@@ -308,9 +389,9 @@ export function cleanTags(tags) {
 async function remove(env, uid, forget) {
   const res = forget
     ? await env.DB.prepare('DELETE FROM snapshots WHERE uid = ?').bind(uid).run()
-    : await env.DB.prepare('UPDATE snapshots SET deleted_at = ?, has_clip = 0 WHERE uid = ? AND deleted_at IS NULL').bind(Date.now(), uid).run();
+    : await env.DB.prepare(`UPDATE snapshots SET deleted_at = ?, has_clip = 0${lacking.has('snapshots.stems') ? '' : ', stems = NULL'} WHERE uid = ? AND deleted_at IS NULL`).bind(Date.now(), uid).run();
   if (!res.meta.changes) return json({ error: 'not found' }, 404);
-  await env.BUCKET.delete([`snapshots/${uid}.json`, `clips/${uid}`]);
+  await env.BUCKET.delete([`snapshots/${uid}.json`, `clips/${uid}`, `stems/${uid}`]);
   return json({ ok: true });
 }
 
@@ -386,8 +467,9 @@ function shapeStack(r) {
   return { ...r, rule: parse(r.rule, null), items: parse(r.items, []), extra: parse(r.extra, null), load: !!r.load };
 }
 
-// What a stack may hold, made safe: each item a chip by uid; a song's part keeps its bars and its
-// way in. Only a song may hold a chip twice. Exported for the tests.
+// What a stack may hold, made safe: each item a chip by uid, with the parts of the rig it does not
+// take (off); a song's part keeps its bars and its way in. Only a song may hold a chip twice.
+// Exported for the tests.
 export function cleanItems(items, kind = 'stack') {
   const out = [], seen = new Set();
   for (const it of Array.isArray(items) ? items : []) {
@@ -395,6 +477,7 @@ export function cleanItems(items, kind = 'stack') {
     if (typeof u !== 'string' || !UID.test(u)) continue;
     if (kind !== 'song') { if (seen.has(u)) continue; seen.add(u); }
     const item = { u };
+    if (kind !== 'song') { const off = offOf(it); if (off.length) item.off = off; }
     if (kind === 'song' && it && typeof it === 'object') {
       const bars = Math.round(Number(it.bars)), morph = Number(it.morph);
       item.bars = Number.isFinite(bars) ? Math.max(1, Math.min(256, bars)) : 8;
@@ -432,7 +515,41 @@ function newId() {
   return [...bytes].map((b) => 'abcdefghijklmnopqrstuvwxyz0123456789'[b % 36]).join('');
 }
 
+// A stack may be given a place on the module only if the place takes its kind: 1 to 4 a macro knob,
+// 5 to 16 a stack knob. Exported for the tests.
+export function fitsPlace(stack, slot) { const k = knobKind(stack); return k !== null && k === placeKind(slot); }
+
+// The module put right, by the rule SF-000 brings its own knobs over by (so the two still agree
+// place for place): what is in a place of its kind stays; what is not goes to the first free place
+// of its kind, in the order of the places they were in; one that finds none comes off the module
+// (it stays in the library). Nothing is lost and nothing is changed but the place.
+// rows: the stacks that have a place, in the order of their places. Gives [[id, the place it goes to, or null], ...]
+// for those that move. Exported for the tests.
+export function tidyPlan(rows) {
+  const taken = new Set(), stay = new Set(), moves = [];
+  for (const r of rows) if (fitsPlace(r, r.slot) && !taken.has(r.slot)) { taken.add(r.slot); stay.add(r.id); }
+  for (const r of rows) {
+    if (stay.has(r.id)) continue;
+    const kind = knobKind(r);
+    let to = null;
+    if (kind) for (let n = kind === 'macro' ? 1 : MACRO_PLACES + 1; n <= (kind === 'macro' ? MACRO_PLACES : 16); n++) if (!taken.has(n)) { to = n; break; }
+    if (to) taken.add(to);
+    moves.push([r.id, to]);
+  }
+  return moves;
+}
+async function tidyModule(env) {
+  const { results } = await env.DB.prepare('SELECT id, kind, items, extra, slot FROM stacks WHERE deleted_at IS NULL AND slot IS NOT NULL ORDER BY slot, updated_at DESC, id').all();
+  const moves = tidyPlan(results.map(shapeStack));
+  if (moves.length) {
+    const now = Date.now();
+    await env.DB.batch(moves.map(([id, to]) => env.DB.prepare('UPDATE stacks SET slot = ?, updated_at = ? WHERE id = ?').bind(to, now, id)));
+  }
+  return moves.length;
+}
+
 async function stacks(env, removed) {
+  if (!removed) await tidyModule(env);
   const { results } = await env.DB.prepare(
     `SELECT ${STACK_COLUMNS}, deleted_at FROM stacks WHERE deleted_at IS ${removed ? 'NOT NULL' : 'NULL'} ORDER BY pos, created_at, id`).all();
   return json({ stacks: results.map(shapeStack) });
@@ -454,6 +571,8 @@ async function makeStack(request, env) {
     const last = await env.DB.prepare('SELECT MAX(pos) AS p FROM stacks WHERE deleted_at IS NULL').first();
     f.pos = (last && typeof last.p === 'number' ? last.p : 0) + 1;
   }
+  const parse = (t, d) => { try { return t ? JSON.parse(t) : d; } catch { return d; } };
+  if (f.slot && !fitsPlace({ kind: f.kind || 'stack', items: parse(f.items, []), extra: parse(f.extra, null) }, f.slot)) return json({ error: 'that place of the module takes the other kind', macro_places: MACRO_PLACES }, 400);
   const stmts = [];
   if (f.slot) stmts.push(env.DB.prepare('UPDATE stacks SET slot = NULL, updated_at = ? WHERE slot = ? AND id <> ?').bind(now, f.slot, id));
   stmts.push(env.DB.prepare(
@@ -465,7 +584,7 @@ async function makeStack(request, env) {
 }
 
 async function changeStack(request, env, id) {
-  const was = await env.DB.prepare('SELECT kind, deleted_at FROM stacks WHERE id = ?').bind(id).first();
+  const was = await env.DB.prepare('SELECT kind, items, extra, slot, deleted_at FROM stacks WHERE id = ?').bind(id).first();
   const body = await request.json().catch(() => null);
   if (was && was.deleted_at && body && body.restore === true) {            // put back, as it was
     await env.DB.prepare('UPDATE stacks SET deleted_at = NULL, updated_at = ? WHERE id = ?').bind(Date.now(), id).run();
@@ -476,6 +595,13 @@ async function changeStack(request, env, id) {
   const keys = Object.keys(f);
   if (!keys.length) return json({ error: 'nothing to change' }, 400);
   const now = Date.now();
+  {
+    // (the place it is in, or is being given, has to take what it will be after this change. One that no longer fits where it sits comes off the module.)
+    const parse = (t, d) => { try { return t ? JSON.parse(t) : d; } catch { return d; } };
+    const after = { kind: f.kind || was.kind, items: parse(f.items !== undefined ? f.items : was.items, []), extra: parse(f.extra !== undefined ? f.extra : was.extra, null) };
+    if (f.slot && !fitsPlace(after, f.slot)) return json({ error: 'that place of the module takes the other kind', macro_places: MACRO_PLACES }, 400);
+    if (f.slot === undefined && was.slot && !fitsPlace(after, was.slot)) { f.slot = null; keys.push('slot'); }
+  }
   const stmts = [];
   // (a knob holds one macro: the one that had this knob lets go of it)
   if (f.slot) stmts.push(env.DB.prepare('UPDATE stacks SET slot = NULL, updated_at = ? WHERE slot = ? AND id <> ?').bind(now, f.slot, id));
@@ -494,15 +620,15 @@ async function removeStack(env, id, forget) {
   return res.meta.changes ? json({ ok: true }) : json({ error: 'not found' }, 404);
 }
 
-// What SF-000 takes at LOAD: every stack in the tray with the chips it holds now, and what is on
-// each knob: a macro (kind "macro": the knob sweeps through its chips) or a stack (kind "stack":
-// the knob steps through them, cueing each, and a press recalls). Each chip is named with what the instrument needs to know before it asks for
-// the snapshot itself (GET /api/snapshots/<uid>) and its clip: its name here, whether it has a clip.
+// What SF-000 takes at LOAD: the module (what is in each of its sixteen places: a macro knob in 1
+// to 4, a stack knob in 5 to 16, each chip of a stack with the parts of the rig it does not take),
+// and every stack marked for the instrument's own library screen with the chips it holds now. Each
+// chip is named with what the instrument needs to know before it asks for the snapshot itself
+// (GET /api/snapshots/<uid>) and its clip: its name here, whether it has a clip.
 async function load(env) {
-  // (in the tray: anything on one of its knobs, and any stack marked for it. A knob holds a macro,
-  // which sweeps through its chips, or a stack, which steps through them: a cue stack.)
+  await tidyModule(env);
   const { results } = await env.DB.prepare(
-    `SELECT ${STACK_COLUMNS} FROM stacks WHERE deleted_at IS NULL AND (slot IS NOT NULL OR (kind <> 'macro' AND load = 1)) ORDER BY pos, created_at, id`).all();
+    `SELECT ${STACK_COLUMNS} FROM stacks WHERE deleted_at IS NULL AND (slot IS NOT NULL OR (kind <> 'macro' AND kind <> 'learn' AND load = 1)) ORDER BY pos, created_at, id`).all();
   const all = results.map(shapeStack);
   const uids = [...new Set(all.flatMap((s) => s.items.map((it) => it.u)))];
   const chips = {};
@@ -512,17 +638,21 @@ async function load(env) {
     for (const r of got.results) chips[r.uid] = { name: r.name, clip: !!r.has_clip, tags: r.tags ? r.tags.split(',') : [], at: r.updated_at };
   }
   const here = (s) => s.items.filter((it) => chips[it.u]);              // (a chip removed from the library since is not loaded)
-  const out = { load: 1, at: Date.now(), stacks: [], knobs: [], chips };
+  const out = { load: 2, at: Date.now(), macro_places: MACRO_PLACES, stacks: [], knobs: [], chips };
   for (const s of all) {
     const items = here(s);
-    // (a knob macro has no chips: its moves. A macro may have moves too. An SF-000 from before knob macros reads one as a stack of none, and leaves it.)
-    const links = s.kind === 'macro' || s.kind === 'learn' ? linksOf(s) : [];
-    if (s.slot && (items.length || links.length)) {
-      const k = { id: s.id, slot: s.slot, kind: s.kind === 'macro' ? 'macro' : s.kind === 'learn' ? 'learn' : 'stack', name: s.name, depth: s.kind === 'macro' || s.kind === 'learn' ? s.depth : null, uids: s.kind === 'learn' ? [] : items.map((it) => it.u) };
-      if (links.length) k.links = links;
-      out.knobs.push(k);
+    if (s.slot && fitsPlace(s, s.slot)) {
+      if (placeKind(s.slot) === 'macro') {
+        const links = linksOf(s);
+        if (links.length) out.knobs.push({ id: s.id, slot: s.slot, kind: 'learn', name: s.name, depth: s.depth, uids: [], links });
+      } else if (items.length) {
+        // (kind as it is kept: an SF-000 from before the two kinds sweeps a "macro" and steps through a "stack"; one with them plays both as stack knobs)
+        const k = { id: s.id, slot: s.slot, kind: s.kind === 'macro' ? 'macro' : 'stack', name: s.name, depth: s.kind === 'macro' ? s.depth : null, uids: items.map((it) => it.u) };
+        if (items.some((it) => it.off && it.off.length)) k.off = items.map((it) => it.off || []);
+        out.knobs.push(k);
+      }
     }
-    if (s.kind === 'macro' || s.kind === 'learn') continue;            // (a macro is a knob's and nothing else; a stack on a knob is among the stacks too)
+    if (s.kind === 'macro' || s.kind === 'learn' || !s.load) continue;  // (the stacks for the instrument's library screen: those marked for it)
     const st = { id: s.id, name: s.name, kind: s.kind === 'song' ? 'song' : 'stack', uids: items.map((it) => it.u) };
     if (s.kind === 'song') st.parts = items.map((it) => ({ uid: it.u, bars: it.bars || 8, morph: it.morph || 0 }));
     out.stacks.push(st);

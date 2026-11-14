@@ -62,5 +62,8 @@ export const ADDED = [
   // What SF-000 last said the snapshot's name was. A name given on the page stands until SF-000
   // sends a name that is not this one, which means it was renamed there since.
   ['snapshots', 'sent_name', 'TEXT'],
+  // The snapshot's stems, if SF-000 has sent them: what the file holds (its rate and bars, each stem's
+  // key and size, and where the first one starts), as JSON. The file itself is in the bucket.
+  ['snapshots', 'stems', 'TEXT'],
 ];
 

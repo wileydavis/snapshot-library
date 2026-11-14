@@ -17,9 +17,9 @@
     <!-- the open stack: what is dealt out on the table -->
     <label class="field name"><span id="s-kind">STACK</span><input id="s-name" type="text" autocomplete="off" spellcheck="false" aria-label="The open stack's name"></label>
     <span id="s-count" class="plate white">0</span>
-    <button id="s-load" class="key" aria-pressed="false" title="Put this stack on the chassis: SF-000 takes it at LOAD"><i></i><span>TO SF-000</span></button>
+    <button id="s-load" class="key" aria-pressed="false" title="Put this stack in the list under the module: LOAD brings it to SF-000's own LIBRARY screen (it is not a knob)"><i></i><span>TO SF-000</span></button>
     <label class="field small" id="s-knob-field" hidden><span>KNOB</span>
-      <select id="s-knob" aria-label="The snapshot knob this macro goes on"></select>
+      <select id="s-knob" aria-label="The knob of SF-000's snapshot module this goes on: 1 to 4 a macro knob, 5 to 16 a stack knob"></select>
     </label>
     <label class="field small" id="s-depth-field" hidden><span>DEPTH</span><input id="s-depth" type="number" min="0" max="100" step="1" aria-label="The macro's depth, 0 to 100"></label>
     <button id="s-keep" class="key" title="Keep this as a stack of its own"><i></i><span>KEEP</span></button>
@@ -43,12 +43,21 @@
   </header>
 
   <main class="stage">
-    <canvas id="bench" aria-label="The bench: stacks of snapshots, the open stack dealt out, and the chassis: what SF-000 loads"></canvas>
+    <canvas id="bench" aria-label="The bench: stacks of snapshots, the open stack dealt out, the column where a stack knob is built, and SF-000's snapshot module: what LOAD brings"></canvas>
     <!-- the rack's rows, when there are more than show: beside the lip they slide under -->
     <div id="rows" class="rows" hidden>
       <button id="rows-up" class="key" title="The rows of stacks before these"><i></i><span>&#9650;</span></button>
       <span id="rows-say" class="plate white"></span>
       <button id="rows-down" class="key" title="The rows of stacks after these"><i></i><span>&#9660;</span></button>
+    </div>
+    <!-- the stack knob's column: its name and its keys, at its head -->
+    <div id="build" class="build" hidden>
+      <div class="line"><span id="b-kind" class="plate black">STACK KNOB</span><input id="b-name" type="text" autocomplete="off" spellcheck="false" placeholder="DRAG CHIPS IN" aria-label="The name of the stack knob in the column" disabled><span id="b-count" class="plate white">0</span></div>
+      <div class="line">
+        <button id="b-add" class="key" aria-pressed="false" title="Put this stack on the first free stack knob of the module (5 to 16). SF-000 takes it at LOAD" disabled><i></i><span>ADD TO MODULE</span></button>
+        <span class="grow"></span>
+        <button id="b-new" class="key" title="Begin another stack knob. This one stays in the rack" disabled><i></i><span>NEW</span></button>
+      </div>
     </div>
     <div id="no3d" class="empty" hidden>THIS BROWSER WOULD NOT START THE 3D BENCH. <a href="flat.html">THE FLAT PAGE</a> HAS THE SAME LIBRARY.</div>
   </main>
@@ -68,7 +77,7 @@
     <button id="mark" class="key" aria-pressed="false"><i></i><span>MARK</span></button>
     <button id="like" class="key" title="A stack of the chips that sound nearest this one"><i></i><span>LIKE THIS</span></button>
     <button id="song" class="key" title="This chip's family spread into the parts of a set piece: in, build, peak, break, peak, out"><i></i><span>SONG FROM THIS</span></button>
-    <button id="knob" class="key" title="A macro from this chip's family, calm to full: what a snapshot knob sweeps"><i></i><span>KNOB FROM THIS</span></button>
+    <button id="knob" class="key" title="A stack knob from this chip's family, calm to full"><i></i><span>KNOB FROM THIS</span></button>
     <button id="takeout" class="key" title="Take it out of this stack. It stays in the library"><i></i><span>TAKE OUT</span></button>
     <button id="delete" class="key danger" title="Remove it from this library. SF-000 keeps its own copy"><i></i><span>REMOVE</span></button>
   </section>
@@ -76,7 +85,7 @@
   <footer class="strip foot">
     <span id="count" class="plate white">0 SNAPSHOTS</span>
     <button id="m-stack" class="key" title="A new stack of the marked chips"><i></i><span>STACK THEM</span></button>
-    <button id="m-macro" class="key" title="A macro of the marked chips, in the order they lie"><i></i><span>MACRO</span></button>
+    <button id="m-macro" class="key" title="A stack knob of the marked chips, in the order they lie: it is put in the column"><i></i><span>STACK KNOB</span></button>
     <button id="m-learn" class="key" title="A knob macro of two marked chips: every knob of the rig that differs between them, turned from the first's place to the second's"><i></i><span>KNOB MACRO</span></button>
     <button id="m-mood" class="key" title="A mood worked out from what the marked chips share: a stack of everything that fits it"><i></i><span>MOOD FROM THEM</span></button>
     <label class="field small tagfield"><span>TAG</span><input id="m-tag" type="text" autocomplete="off" spellcheck="false" placeholder="+ADD  -TAKE OFF" aria-label="Tags to put on the marked chips, or with a minus to take off"></label>
