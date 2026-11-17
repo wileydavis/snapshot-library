@@ -130,6 +130,10 @@ async function route(request, env, url) {
   }
   if (p === '/api/actions' && m === 'POST') return receiveActions(request, env);
   if (p === '/api/actions' && m === 'GET') return listActions(env, url);
+  if (p === '/api/analysis' && m === 'POST') return receiveAnalysis(request, env);
+  if (p === '/api/analysis' && m === 'GET') return listAnalysis(env);
+  const an = p.match(/^\/api\/analysis\/(latest|[0-9]{1,16})$/);
+  if (an && m === 'GET') return oneAnalysis(env, an[1]);
   if (p === '/api/sessions' && m === 'POST') return receiveSession(request, env);
   if (p === '/api/sessions' && m === 'GET') return listSessions(env, url);
   const se = p.match(/^\/api\/sessions\/([^/]+)\/([0-9]{1,16})$/);
@@ -520,6 +524,47 @@ async function receiveSession(request, env) {
   return json({ ok: true, at, hash, size: kept.length });
 }
 
+// ---- what the analysis found, sent back by it from the machine it runs on
+// Body: { "at": ms, "app": "...", "snapshots": { "<uid>": {...} }, ... }. Kept whole if it differs from the newest
+// one here; none is written over.
+const MAX_ANALYSIS = 24 * 1024 * 1024;
+async function receiveAnalysis(request, env) {
+  const text = await request.text();
+  if (text.length > MAX_ANALYSIS) return json({ error: 'too large' }, 413);
+  let body;
+  try { body = JSON.parse(text); } catch { return json({ error: 'not JSON' }, 400); }
+  if (!body || typeof body !== 'object' || Array.isArray(body) || !body.snapshots || typeof body.snapshots !== 'object') return json({ error: 'no snapshots' }, 400);
+  const at = Math.round(Number(body.at));
+  if (!Number.isFinite(at) || at <= 0) return json({ error: 'when?' }, 400);
+  // (the hash leaves out when it was made: the same findings made again are not another result)
+  const { at: _when, ...what } = body;
+  const hash = hex(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(what)))).slice(0, 32);
+  const last = await env.DB.prepare('SELECT at, hash FROM analysis ORDER BY at DESC LIMIT 1').first();
+  if (last && last.hash === hash) return json({ ok: true, same: true, at: last.at, hash });
+  if (last && at <= last.at) return json({ error: 'older than the newest here' }, 409);
+  await env.BUCKET.put(`analysis/${at}.json`, text, { httpMetadata: { contentType: 'application/json' } });
+  await env.DB.prepare('INSERT OR IGNORE INTO analysis (at, hash, size, app, snapshots, received_at) VALUES (?, ?, ?, ?, ?, ?)')
+    .bind(at, hash, text.length, String(body.app || '').slice(0, 80), Object.keys(body.snapshots).length, Date.now()).run();
+  return json({ ok: true, at, hash, size: text.length });
+}
+
+async function listAnalysis(env) {
+  const { results } = await env.DB.prepare('SELECT at, hash, size, app, snapshots FROM analysis ORDER BY at DESC LIMIT ?').bind(MAX_LIST).all();
+  return json({ analysis: results });
+}
+
+async function oneAnalysis(env, which) {
+  let at = Number(which);
+  if (which === 'latest') {
+    const last = await env.DB.prepare('SELECT at FROM analysis ORDER BY at DESC LIMIT 1').first();
+    if (!last) return json({ error: 'nothing found yet' }, 404);
+    at = last.at;
+  }
+  const obj = await env.BUCKET.get(`analysis/${at}.json`);
+  if (!obj) return json({ error: 'no such result' }, 404);
+  return new Response(obj.body, { headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': which === 'latest' ? 'no-store' : 'private, max-age=31536000, immutable' } });
+}
+
 async function listSessions(env, url) {
   const library = url.searchParams.get('library') || '';
   if (!LIBRARY.test(library)) return json({ error: 'which library?' }, 400);
@@ -907,6 +952,7 @@ async function stats(env) {
     files: await count('SELECT COUNT(*) AS n FROM files'),
     actions: await count('SELECT COUNT(*) AS n FROM actions'),
     sessions: await count('SELECT COUNT(*) AS n FROM sessions'),
+    analysis: await count('SELECT COUNT(*) AS n FROM analysis'),
   };
   return json({ ...all, defs: defs.n, stacks: st.n, in_tray: st.loaded, archive });
 }

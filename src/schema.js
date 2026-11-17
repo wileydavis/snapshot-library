@@ -87,6 +87,16 @@ export const SCHEMA = [
     received_at  INTEGER NOT NULL,
     PRIMARY KEY (library_id, at)
   )`,
+  // What the analysis found: each result it sent, whole, in R2 (analysis/<at>.json); a row here for each. A result is
+  // never written over: the newest is what is used, the rest are what it thought before.
+  `CREATE TABLE IF NOT EXISTS analysis (
+    at           INTEGER PRIMARY KEY,        -- ms, when the analysis made it
+    hash         TEXT NOT NULL,              -- of what was kept
+    size         INTEGER NOT NULL,
+    app          TEXT DEFAULT '',            -- the analysis program and its version
+    snapshots    INTEGER NOT NULL DEFAULT 0, -- how many it says something of
+    received_at  INTEGER NOT NULL
+  )`,
 ];
 
 // Columns added to a table that was already there. (SQLite has no "add if missing": the Worker

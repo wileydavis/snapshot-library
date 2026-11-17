@@ -166,6 +166,7 @@ D1 database snapshot-library
   actions                  the instrument's log: a row a line, as it arrived (what was done with which
                            chip, and when), under the line's own name so that none is kept twice
   sessions                 which sessions are here: library, time, hash, size, the build that wrote it
+  analysis                 what the analysis found, a row a result (the result itself in R2: analysis/<at>.json)
 ```
 
 **To be studied from.** The lossless sound, the sound files, the log and the sessions are what
@@ -243,6 +244,8 @@ snapshot's own id.
 | `GET /api/actions?library=&after=<ms>&limit=` | That library's lines from after that time, oldest first, and `total`. |
 | `POST /api/sessions` | `{ "library", "at": ms, "app", "session": {...} }`. Kept if it differs from the last one that library sent (`same: true` if not). |
 | `GET /api/sessions?library=` | What is here for it, newest first: `{ at, hash, size, app }`. `GET /api/sessions/<library>/<at>`: that session as it was sent. |
+| `POST /api/analysis` | What the analysis found, from SF-000 Analysis on the machine it runs on: `{ "at": ms, "app", "counts", "snapshots": { "<uid>": { "energy", "alike", "up", "down", "follows", "grew_from", "measured" } } }`. Kept whole if it differs from the newest one here (`same: true` if not); one older than the newest is refused (409). 24 MB at most. |
+| `GET /api/analysis` | What is here, newest first: `{ at, hash, size, app, snapshots }`. `GET /api/analysis/latest`: the newest as it was sent; `GET /api/analysis/<at>`: an older one. |
 | `POST /api/have` | `{ "uids": [...] }` → `{ "have": { "<uid>": { "clip": true, "stems": true, "lossless": true } } }`. What is already here, for catching up after time offline. One removed here answers `{ "gone": true }`: known, not wanted again. |
 | `GET /api/snapshots` | The list the page draws from, newest first. Each says which stems it has (`stems`: their keys) and which parts of its sound without loss (`lossless`). |
 | `GET /api/snapshots/<uid>` | One, with the snapshot whole under `snapshot`. |
@@ -311,8 +314,9 @@ changed or dropped, so a deploy cannot take a snapshot, a tag or a stack with it
 - Stems for snapshots taken before SF-000 kept them (its fortieth build): those play whole.
 - **Putting chips away from the instrument.** The samples a snapshot names are kept here now
   (by their SHA-256), but SF-000 does not yet fetch one back, so it cannot safely let go of a chip.
-- **The program that studies the library.** What it needs is kept (lossless sound, sound files,
-  the log, the sessions); the program itself, and a place here for what it finds, are not built.
+- **This page showing what the analysis found.** It is kept here (`/api/analysis/latest`); for now
+  it is listened to on the page SF-000 Analysis writes on its own machine, and SF-000 does not read
+  it yet.
 - A song's parts are set one at a time on the chip's strip: no row of bars to drag.
 - The moods' places are fixed in `stacks.js`: no page to move them on. MOOD FROM THEM is the way
   to make your own.

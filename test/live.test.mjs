@@ -347,10 +347,31 @@ if (!process.env.SEED) await j('/api/stacks/testlearn001?forget=1', 'DELETE');
   assert.equal((await j(`/api/sessions/${lib}/${at + 1000}`)).status, 404);
 }
 
+// What the analysis found: kept whole, the newest used, none written over
+{
+  const before = await j('/api/analysis/latest');
+  const had = before.status === 200 ? (await before.json()).at : 0;
+  const at = Math.max(Date.now(), had + 1);
+  const found = { at, app: 'sf000-analysis test', snapshots: { [real.uid]: { energy: 0.5, alike: [] } } };
+  assert.equal((await j('/api/analysis', 'POST', { at })).status, 400, 'nothing found in it');
+  let r = await (await j('/api/analysis', 'POST', found)).json();
+  assert.deepEqual([r.ok, r.at, !!r.same], [true, at, false]);
+  r = await (await j('/api/analysis', 'POST', { ...found, at: at + 5 })).json();
+  assert.equal(r.same, true, 'the same findings made again are not another result');
+  assert.equal((await j('/api/analysis', 'POST', { ...found, at: at - 5, snapshots: {} })).status, 409, 'one older than the newest is not taken');
+  const newer = { ...found, at: at + 10, snapshots: { [real.uid]: { energy: 0.6, alike: [] } } };
+  assert.equal((await (await j('/api/analysis', 'POST', newer)).json()).at, at + 10);
+  assert.deepEqual(await (await j('/api/analysis/latest')).json(), newer, 'the newest comes back as it went in');
+  assert.equal((await (await j(`/api/analysis/${at}`)).json()).snapshots[real.uid].energy, 0.5, 'and the one before is still there');
+  const listed = (await (await j('/api/analysis')).json()).analysis;
+  assert.deepEqual(listed.slice(0, 2).map((x) => [x.at, x.snapshots]), [[at + 10, 1], [at, 1]]);
+}
+
 const st = await (await j('/api/stats')).json();
 assert.ok(st.snapshots >= many.length + 2 && st.clips >= 1 && st.defs >= 30 && st.libraries >= 2);
 assert.ok(st.stacks >= 5 && st.in_tray >= 1);
 assert.ok(st.archive.lossless >= 1 && st.archive.files >= 1 && st.archive.actions >= 4 && st.archive.sessions >= 2, 'what the instrument sent is counted');
+assert.ok(st.archive.analysis >= 2, 'and what the analysis found');
 if (!process.env.SEED) for (const id of ['teststack001', 'testmacro001', 'testmacro002', 'testsong0001', 'testrule0001']) await j(`/api/stacks/${id}?forget=1`, 'DELETE');
 
 if (!process.env.SEED) {
