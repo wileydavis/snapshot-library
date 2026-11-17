@@ -1,6 +1,6 @@
 // The parts that need no server: node test/unit.test.mjs
 import assert from 'node:assert/strict';
-import { summarise, cleanTags, cleanItems, stackFields, fitsPlace, tidyPlan, readStemsHead } from '../src/worker.js';
+import { summarise, cleanTags, cleanItems, stackFields, fitsPlace, tidyPlan, readStemsHead, readLosslessHead, cleanAction } from '../src/worker.js';
 import { readHead, stemKeys } from '../public/js/stems.js';
 import { keyRects, keyAt, partsOf } from '../public/js/card.js';
 import * as st from '../public/js/stacks.js';
@@ -250,4 +250,38 @@ assert.deepEqual(cleanTags([' Dark ', 'dark', 'Rolling, low', '', 'x'.repeat(60)
   assert.equal(st.ruleName({ type: 'like', uid: seed.uid }, all), `LIKE ${seed.name}`);
   assert.equal(st.ruleName({ type: 'mood', mood: 'dub' }, all), 'DUB');
 }
+// A snapshot's sound without loss, as SF-000 writes it: the head read, each part a FLAC file, nothing cut short.
+{
+  const enc = new TextEncoder();
+  const flac = (t) => enc.encode('fLaC' + t);
+  const parts = [['mix', flac('-the-mix'), 1], ['kick', flac('-k'), 1], ['bass', flac('-bass-over'), 0.5]];
+  const head = enc.encode(`SF0LOSSLESS1\n${JSON.stringify({ rate: 48000, bars: 4, bits: 24, parts: parts.map(([key, b, gain]) => ({ key, bytes: b.length, gain })) })}\n`);
+  const file = new Uint8Array(head.length + parts.reduce((n, [, b]) => n + b.length, 0));
+  file.set(head);
+  let at = head.length;
+  for (const [, b] of parts) { file.set(b, at); at += b.length; }
+  const got = readLosslessHead(file.buffer);
+  assert.deepEqual([got.rate, got.bars, got.bits], [48000, 4, 24]);
+  assert.deepEqual(got.parts.map((x) => [x.key, x.bytes, x.gain]), [['mix', 12, 1], ['kick', 6, 1], ['bass', 14, 0.5]]);
+  assert.equal(got.parts[0].at, head.length);
+  assert.equal(got.parts[2].at + got.parts[2].bytes, file.length);
+  assert.equal(readLosslessHead(file.slice(0, file.length - 1).buffer), null, 'cut short: not taken');
+  assert.equal(readLosslessHead(enc.encode('SF0STEMS1\n{}\n').buffer), null, 'a stems file is not one');
+  const notFlac = file.slice(); notFlac[head.length] = 0x4f;
+  assert.equal(readLosslessHead(notFlac.buffer), null, 'a part that is not FLAC: not taken');
+  const noGain = enc.encode(`SF0LOSSLESS1\n${JSON.stringify({ rate: 44100, bars: 2, bits: 24, parts: [{ key: 'mix', bytes: 6 }] })}\nfLaC-m`);
+  assert.equal(readLosslessHead(noGain.buffer).parts[0].gain, 1, 'no gain said: as it was');
+  const badGain = enc.encode(`SF0LOSSLESS1\n${JSON.stringify({ rate: 44100, bars: 2, bits: 24, parts: [{ key: 'mix', bytes: 6, gain: 0 }] })}\nfLaC-m`);
+  assert.equal(readLosslessHead(badGain.buffer), null);
+}
+// A line of the instrument's log: kept as it came if it is well formed, and not at all if it is not.
+{
+  const line = { k: '18f3a2b9c01-0007-a1b2', t: 1794442207135, a: 'recall', u: '8f39febfd29e418b-1a1cd171f9f', parts: 2047, from: 'library' };
+  const c = cleanAction(line);
+  assert.deepEqual([c.k, c.t, c.a, c.u], [line.k, line.t, 'recall', line.u]);
+  assert.deepEqual(JSON.parse(c.body), line, 'everything it said is kept');
+  assert.equal(cleanAction({ ...line, u: 'not a uid at all!' }).u, '', 'a chip it cannot name is not indexed, and the line is still kept');
+  for (const bad of [null, [], 'x', { ...line, k: 'NO' }, { ...line, a: 'Recall!' }, { ...line, t: 'then' }, { ...line, t: -1 }, { ...line, note: 'x'.repeat(5000) }]) assert.equal(cleanAction(bad), null);
+}
+
 console.log('unit tests ok');

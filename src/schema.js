@@ -54,6 +54,39 @@ export const SCHEMA = [
     updated_at   INTEGER NOT NULL,
     deleted_at   INTEGER                     -- removed: kept, so it can be put back
   )`,
+  // ---- What the instrument sends so that the library can be studied away from it (SF-000's seventy-seventh build).
+  // A sound file a snapshot needs to be played again: a lane's sample, an impulse response. Named by what it is (its
+  // SHA-256, as SF-000's own `samples` list names it), so the same file sent from two places is kept once.
+  `CREATE TABLE IF NOT EXISTS files (
+    sha256       TEXT PRIMARY KEY,
+    name         TEXT DEFAULT '',            -- the file's own name, as it was first sent
+    size         INTEGER,
+    received_at  INTEGER NOT NULL
+  )`,
+  // What was done with the chips, as the instrument logged it: a row for each thing done (heard, recalled, added to a
+  // stack, a part of an arrangement reached). k is the instrument's own name for the line: one sent twice is kept once.
+  `CREATE TABLE IF NOT EXISTS actions (
+    library_id   TEXT NOT NULL,
+    k            TEXT NOT NULL,
+    t            INTEGER,                    -- when, ms
+    a            TEXT DEFAULT '',            -- what was done
+    u            TEXT DEFAULT '',            -- the chip it was done to (its uid), if one
+    body         TEXT NOT NULL,              -- the line as it arrived (JSON)
+    received_at  INTEGER NOT NULL,
+    PRIMARY KEY (library_id, k)
+  )`,
+  `CREATE INDEX IF NOT EXISTS actions_time ON actions(library_id, t)`,
+  // The session as it stood, without its chips: its module and the modules kept, the knobs kept, the stacks, the
+  // arrangements, its samples' list. Kept each time it had changed, and never written over: the file is in the bucket.
+  `CREATE TABLE IF NOT EXISTS sessions (
+    library_id   TEXT NOT NULL,
+    at           INTEGER NOT NULL,           -- when the instrument sent it, ms
+    hash         TEXT NOT NULL,              -- of what it held: the same thing sent again is not kept twice
+    size         INTEGER,
+    app          TEXT DEFAULT '',            -- the build that sent it
+    received_at  INTEGER NOT NULL,
+    PRIMARY KEY (library_id, at)
+  )`,
 ];
 
 // Columns added to a table that was already there. (SQLite has no "add if missing": the Worker
@@ -65,5 +98,8 @@ export const ADDED = [
   // The snapshot's stems, if SF-000 has sent them: what the file holds (its rate and bars, each stem's
   // key and size, and where the first one starts), as JSON. The file itself is in the bucket.
   ['snapshots', 'stems', 'TEXT'],
+  // The snapshot's sound without loss, if SF-000 has sent it: its mix and each stem as FLAC, in one file. What the file
+  // holds (its rate, bars and bit depth, each part's key, size and the gain it was written at), as JSON.
+  ['snapshots', 'lossless', 'TEXT'],
 ];
 

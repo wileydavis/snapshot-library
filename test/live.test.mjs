@@ -67,7 +67,7 @@ const many = madeUp(process.env.SEED ? 60 : 12);
 for (const s of many) assert.equal((await j('/api/snapshots', 'POST', { snapshot: s })).status, 200);
 for (const s of many.filter((_, i) => i % 3 !== 2)) assert.equal((await fetch(`${BASE}/api/clips/${s.uid}`, { method: 'PUT', body: clip })).status, 200);
 r = await (await j('/api/have', 'POST', { uids: [real.uid, old.uid, many[0].uid, many[2].uid, '7e577e577e577e57-never-sent'] })).json();
-assert.deepEqual(r.have, { [real.uid]: { clip: true, stems: false }, [old.uid]: { clip: false, stems: false }, [many[0].uid]: { clip: true, stems: false }, [many[2].uid]: { clip: false, stems: false } });
+assert.deepEqual(r.have, { [real.uid]: { clip: true, stems: false, lossless: false }, [old.uid]: { clip: false, stems: false, lossless: false }, [many[0].uid]: { clip: true, stems: false, lossless: false }, [many[2].uid]: { clip: false, stems: false, lossless: false } });
 
 // 8. the list the page draws from
 const listed = (await (await j('/api/snapshots')).json()).snapshots;
@@ -245,7 +245,7 @@ if (!process.env.SEED) await j('/api/stacks/testlearn001?forget=1', 'DELETE');
   assert.equal((await put(u[0], enc.encode('not stems at all'))).status, 400);
   const took = await (await put(u[0], file)).json();
   assert.deepEqual([took.ok, took.keys], [true, ['kick', 'bass', 'dub']]);
-  assert.deepEqual((await (await j('/api/have', 'POST', { uids: [u[0]] })).json()).have[u[0]], { clip: true, stems: true });
+  assert.deepEqual((await (await j('/api/have', 'POST', { uids: [u[0]] })).json()).have[u[0]], { clip: true, stems: true, lossless: false });
   assert.deepEqual((await (await j(`/api/snapshots/${u[0]}`)).json()).stems, ['kick', 'bass', 'dub'], 'the snapshot says which stems it has');
   const whole = new Uint8Array(await (await fetch(`${BASE}/api/stems/${u[0]}`)).arrayBuffer());
   assert.deepEqual([...whole], [...file], 'the file comes back to the byte');
@@ -256,9 +256,96 @@ if (!process.env.SEED) await j('/api/stacks/testlearn001?forget=1', 'DELETE');
   assert.equal((await fetch(`${BASE}/api/stems/${u[1]}`)).status, 404, 'one with none says so');
 }
 
+// ---- what the instrument sends so that the library can be studied away from it
+// a snapshot's sound without loss: SF-000's own file, kept whole; one part of it by its key, with the gain it was written at
+{
+  const enc = new TextEncoder();
+  const u = many.slice(0, 2).map((s) => s.uid);
+  const parts = [['mix', enc.encode('fLaC-the-mix'), 1], ['kick', enc.encode('fLaC-kick'), 1], ['bass', enc.encode('fLaC-bass'), 0.25]];
+  const head = enc.encode(`SF0LOSSLESS1\n${JSON.stringify({ rate: 48000, bars: 4, bits: 24, parts: parts.map(([key, b, gain]) => ({ key, bytes: b.length, gain })) })}\n`);
+  const file = new Uint8Array(head.length + parts.reduce((n, [, b]) => n + b.length, 0));
+  file.set(head);
+  let at = head.length;
+  for (const [, b] of parts) { file.set(b, at); at += b.length; }
+  const put = (uid, bytes) => fetch(`${BASE}/api/lossless/${uid}`, { method: 'PUT', headers: { 'content-type': 'application/octet-stream' }, body: bytes });
+  assert.equal((await put('7e577e577e577e57-never-sent', file)).status, 404, 'the snapshot first');
+  assert.equal((await put(u[0], file.slice(0, file.length - 3))).status, 400, 'a file cut short is not taken');
+  assert.equal((await put(u[0], enc.encode('SF0STEMS1\n{}\n'))).status, 400, 'nor a stems file');
+  const took = await (await put(u[0], file)).json();
+  assert.deepEqual([took.ok, took.keys], [true, ['mix', 'kick', 'bass']]);
+  assert.equal((await (await j('/api/have', 'POST', { uids: [u[0]] })).json()).have[u[0]].lossless, true);
+  assert.equal((await (await j('/api/have', 'POST', { uids: [u[1]] })).json()).have[u[1]].lossless, false);
+  const whole = new Uint8Array(await (await fetch(`${BASE}/api/lossless/${u[0]}`)).arrayBuffer());
+  assert.deepEqual([...whole], [...file], 'the file comes back to the byte');
+  const one = await fetch(`${BASE}/api/lossless/${u[0]}?key=bass`);
+  assert.deepEqual([one.headers.get('content-type'), one.headers.get('x-gain')], ['audio/flac', '0.25']);
+  assert.equal(new TextDecoder().decode(await one.arrayBuffer()), 'fLaC-bass', 'one part of it, by its key');
+  assert.equal((await fetch(`${BASE}/api/lossless/${u[0]}?key=lead`)).status, 404);
+  assert.equal((await fetch(`${BASE}/api/lossless/${u[1]}`)).status, 404, 'one with none says so');
+}
+// a sound file a snapshot needs: kept under its SHA-256, and only if it is the file that name says
+{
+  const bytes = new TextEncoder().encode('RIFF....WAVEfmt a made-up sample ' + Date.now());
+  const sha = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map((b) => b.toString(16).padStart(2, '0')).join('');
+  const wrong = 'f'.repeat(64);
+  assert.deepEqual((await (await j('/api/files/have', 'POST', { hashes: [sha, wrong, 'nonsense'] })).json()).have, {});
+  assert.equal((await fetch(`${BASE}/api/files/${wrong}?name=kick.wav`, { method: 'PUT', body: bytes })).status, 400, 'not the file its name says');
+  assert.equal((await fetch(`${BASE}/api/files/nothex`, { method: 'PUT', body: bytes })).status, 400);
+  let r2 = await (await fetch(`${BASE}/api/files/${sha}?name=${encodeURIComponent('my kick.wav')}`, { method: 'PUT', body: bytes })).json();
+  assert.deepEqual([r2.ok, r2.size, r2.had], [true, bytes.length, false]);
+  r2 = await (await fetch(`${BASE}/api/files/${sha}?name=other.wav`, { method: 'PUT', body: bytes })).json();
+  assert.equal(r2.had, true, 'sent again: kept once');
+  assert.deepEqual((await (await j('/api/files/have', 'POST', { hashes: [sha, wrong] })).json()).have, { [sha]: true });
+  const back = await fetch(`${BASE}/api/files/${sha}`);
+  assert.equal(decodeURIComponent(back.headers.get('x-name')), 'my kick.wav', 'under the name it first came with');
+  assert.deepEqual([...new Uint8Array(await back.arrayBuffer())], [...bytes], 'the file comes back to the byte');
+  assert.equal((await fetch(`${BASE}/api/files/${wrong}`)).status, 404);
+}
+// the instrument's log of what was done with the chips: each line kept once, in the order it happened
+{
+  const lib = 'ac710457e57ac710';
+  const t0 = Date.now() - 100000;
+  const run = Math.random().toString(36).slice(2, 8);
+  const lines = [
+    { k: `${run}-0001`, t: t0 + 10, a: 'hear', u: real.uid, parts: 2047, from: 'bin' },
+    { k: `${run}-0002`, t: t0 + 20, a: 'recall', u: real.uid, parts: 2047, notes: true },
+    { k: `${run}-0003`, t: t0 + 30, a: 'add', u: real.uid, to: 'stack', name: 'BREAKS' },
+  ];
+  assert.equal((await j('/api/actions', 'POST', { lines })).status, 400, 'which library?');
+  let r3 = await (await j('/api/actions', 'POST', { library: lib, lines: [...lines, { k: 'x', a: 'bad' }, null] })).json();
+  assert.deepEqual([r3.ok, r3.taken, r3.refused], [true, 3, 2]);
+  r3 = await (await j('/api/actions', 'POST', { library: lib, lines: [lines[2], { k: `${run}-0004`, t: t0 + 40, a: 'part', u: old.uid, at: 2 }] })).json();
+  assert.equal(r3.taken, 2, 'one sent again is taken and kept once');
+  const got3 = await (await j(`/api/actions?library=${lib}&after=${t0}`)).json();
+  const mine = got3.actions.filter((x) => x.k.startsWith(run));
+  assert.deepEqual(mine.map((x) => x.a), ['hear', 'recall', 'add', 'part'], 'each once, oldest first');
+  assert.deepEqual(mine[0], lines[0], 'a line comes back as it went in');
+  assert.deepEqual((await (await j(`/api/actions?library=${lib}&after=${t0 + 25}`)).json()).actions.filter((x) => x.k.startsWith(run)).map((x) => x.a), ['add', 'part']);
+  assert.equal((await j('/api/actions?library=nope')).status, 400);
+}
+// the session as it stood, without its chips: kept when it has changed, each its own file
+{
+  const lib = 'ac710457e57ac710';
+  const at = Date.now();
+  const session = { sf000: 1, modules: [{ id: 'm1', name: 'LIVE SET 1' }], keptKnobs: [], stacks: [], stamp: at };
+  assert.equal((await j('/api/sessions', 'POST', { library: lib, at })).status, 400, 'no session');
+  let r4 = await (await j('/api/sessions', 'POST', { library: lib, at, app: '0.1.0 test', session })).json();
+  assert.deepEqual([r4.ok, r4.at, !!r4.same], [true, at, false]);
+  r4 = await (await j('/api/sessions', 'POST', { library: lib, at: at + 1000, app: '0.1.0 test', session })).json();
+  assert.equal(r4.same, true, 'the same thing sent again is not kept twice');
+  r4 = await (await j('/api/sessions', 'POST', { library: lib, at: at + 2000, app: '0.1.0 test', session: { ...session, modules: [...session.modules, { id: 'm2', name: 'DUB SET' }] } })).json();
+  assert.deepEqual([r4.ok, r4.at, !!r4.same], [true, at + 2000, false]);
+  const listed = (await (await j(`/api/sessions?library=${lib}`)).json()).sessions;
+  assert.deepEqual(listed.slice(0, 2).map((x) => x.at), [at + 2000, at], 'the newest first; the one that was the same is not among them');
+  assert.deepEqual(await (await j(`/api/sessions/${lib}/${at}`)).json(), session, 'it comes back as it went in');
+  assert.equal((await (await j(`/api/sessions/${lib}/${at + 2000}`)).json()).modules.length, 2);
+  assert.equal((await j(`/api/sessions/${lib}/${at + 1000}`)).status, 404);
+}
+
 const st = await (await j('/api/stats')).json();
 assert.ok(st.snapshots >= many.length + 2 && st.clips >= 1 && st.defs >= 30 && st.libraries >= 2);
 assert.ok(st.stacks >= 5 && st.in_tray >= 1);
+assert.ok(st.archive.lossless >= 1 && st.archive.files >= 1 && st.archive.actions >= 4 && st.archive.sessions >= 2, 'what the instrument sent is counted');
 if (!process.env.SEED) for (const id of ['teststack001', 'testmacro001', 'testmacro002', 'testsong0001', 'testrule0001']) await j(`/api/stacks/${id}?forget=1`, 'DELETE');
 
 if (!process.env.SEED) {

@@ -7,6 +7,13 @@ import { SCHEMA, ADDED } from './schema.js';
 const MAX_JSON = 2 * 1024 * 1024;       // a snapshot with the definitions it names
 const MAX_CLIP = 8 * 1024 * 1024;       // four bars of Ogg are a few hundred kilobytes
 const MAX_STEMS = 48 * 1024 * 1024;     // a snapshot's stems: a few bars of Ogg for each lane, the returns and the drum bus
+const MAX_LOSSLESS = 96 * 1024 * 1024;  // the same bars without loss: the mix and each stem as FLAC
+const MAX_FILE = 96 * 1024 * 1024;      // a sample or an impulse response
+const MAX_SESSION = 4 * 1024 * 1024;    // a session without its chips
+const MAX_ACTIONS = 1000;               // lines of the instrument's log in one message
+const SHA = /^[0-9a-f]{64}$/;
+const LIBRARY = /^[0-9a-f]{16}$/;
+const ACTION_KEY = /^[0-9a-z-]{4,48}$/;
 const MAX_LIST = 5000;
 const UID = /^[0-9a-f]{16}-[0-9A-Za-z_.-]{1,64}$/;
 const PRINT = /^[0-9a-f]{16}$/;
@@ -106,6 +113,27 @@ async function route(request, env, url) {
     if (m === 'PUT') return receiveStems(request, env, uid);
     if (m === 'GET' || m === 'HEAD') return serveStems(request, env, uid, url.searchParams.get('key'));
   }
+  // ---- what the instrument sends so that the library can be studied away from it
+  const ll = p.match(/^\/api\/lossless\/([^/]+)$/);
+  if (ll) {
+    const uid = decodeURIComponent(ll[1]);
+    if (!UID.test(uid)) return json({ error: 'not a uid' }, 400);
+    if (m === 'PUT') return receiveLossless(request, env, uid);
+    if (m === 'GET' || m === 'HEAD') return serveLossless(request, env, uid, url.searchParams.get('key'));
+  }
+  if (p === '/api/files/have' && m === 'POST') return filesHave(request, env);
+  const fl = p.match(/^\/api\/files\/([^/]+)$/);
+  if (fl) {
+    if (!SHA.test(fl[1])) return json({ error: 'not a file' }, 400);
+    if (m === 'PUT') return receiveFile(request, env, fl[1], url.searchParams.get('name') || '');
+    if (m === 'GET' || m === 'HEAD') return serveFile(request, env, fl[1]);
+  }
+  if (p === '/api/actions' && m === 'POST') return receiveActions(request, env);
+  if (p === '/api/actions' && m === 'GET') return listActions(env, url);
+  if (p === '/api/sessions' && m === 'POST') return receiveSession(request, env);
+  if (p === '/api/sessions' && m === 'GET') return listSessions(env, url);
+  const se = p.match(/^\/api\/sessions\/([^/]+)\/([0-9]{1,16})$/);
+  if (se && m === 'GET') return LIBRARY.test(se[1]) ? oneSession(env, se[1], Number(se[2])) : json({ error: 'not a library' }, 400);
 
   let hit = p.match(/^\/api\/snapshots\/([^/]+)$/);
   if (hit) {
@@ -309,6 +337,189 @@ async function serveStems(request, env, uid, key) {
   return new Response(obj.body, { headers });
 }
 
+// ======================================================================
+// What the instrument sends so that the library can be studied away from it
+// ======================================================================
+
+// A snapshot's sound without loss, as SF-000 keeps it: "SF0LOSSLESS1\n", a line of JSON ({ rate, bars, bits,
+// parts: [{ key, bytes, gain }] }), then the parts one after another, each a FLAC file: "mix" first, then each stem
+// that sounded. gain is what the sound was multiplied by before it was written (1, or less where a stem ran over full
+// scale): divide by it to have the sound as it was. Kept whole; what it holds is written beside the snapshot.
+const LOSSLESS_MARK = 'SF0LOSSLESS1\n';
+export function readLosslessHead(bytes) {
+  const u8 = new Uint8Array(bytes);
+  const mark = new TextDecoder().decode(u8.subarray(0, LOSSLESS_MARK.length));
+  if (mark !== LOSSLESS_MARK) return null;
+  let end = -1;
+  for (let i = LOSSLESS_MARK.length; i < Math.min(u8.length, LOSSLESS_MARK.length + 16384); i++) if (u8[i] === 10) { end = i; break; }
+  if (end < 0) return null;
+  let head;
+  try { head = JSON.parse(new TextDecoder().decode(u8.subarray(LOSSLESS_MARK.length, end))); } catch { return null; }
+  if (!head || !Array.isArray(head.parts) || !head.parts.length || head.parts.length > 64) return null;
+  const parts = [];
+  let at = end + 1;
+  for (const pt of head.parts) {
+    const n = Number(pt && pt.bytes);
+    const gain = pt && pt.gain === undefined ? 1 : Number(pt && pt.gain);
+    if (!pt || typeof pt.key !== 'string' || !/^[a-z0-9_]{1,40}$/.test(pt.key) || !Number.isInteger(n) || n <= 4 || !(gain > 0) || !Number.isFinite(gain)) return null;
+    if (at + 4 > u8.length || u8[at] !== 0x66 || u8[at + 1] !== 0x4c || u8[at + 2] !== 0x61 || u8[at + 3] !== 0x43) return null;      // ("fLaC": each part is a FLAC file)
+    parts.push({ key: pt.key, at, bytes: n, gain });
+    at += n;
+  }
+  if (at !== u8.length) return null;                                    // (cut short, or something after the last)
+  return { rate: Number(head.rate) || 0, bars: Number(head.bars) || 0, bits: Number(head.bits) || 0, parts };
+}
+
+async function receiveLossless(request, env, uid) {
+  if (lacking.has('snapshots.lossless')) return json({ error: 'this library cannot keep lossless sound' }, 501);
+  const row = await env.DB.prepare('SELECT deleted_at FROM snapshots WHERE uid = ?').bind(uid).first();
+  if (!row) return json({ error: 'send the snapshot first' }, 404);
+  if (row.deleted_at) return json({ ok: true, uid, gone: true });
+  if (Number(request.headers.get('content-length') || 0) > MAX_LOSSLESS) return json({ error: 'too large' }, 413);
+  const bytes = await request.arrayBuffer();
+  if (bytes.byteLength > MAX_LOSSLESS) return json({ error: 'too large' }, 413);
+  const head = readLosslessHead(bytes);
+  if (!head) return json({ error: 'not a lossless file' }, 400);
+  await env.BUCKET.put(`lossless/${uid}`, bytes, { httpMetadata: { contentType: 'application/octet-stream' } });
+  await env.DB.prepare('UPDATE snapshots SET lossless = ?, updated_at = ? WHERE uid = ?').bind(JSON.stringify(head), Date.now(), uid).run();
+  return json({ ok: true, uid, size: bytes.byteLength, keys: head.parts.map((x) => x.key) });
+}
+
+// The whole file, or with ?key= one part of it (a FLAC file; its gain is in the answer's x-gain).
+async function serveLossless(request, env, uid, key) {
+  const row = lacking.has('snapshots.lossless') ? null : await env.DB.prepare('SELECT lossless FROM snapshots WHERE uid = ? AND deleted_at IS NULL').bind(uid).first();
+  let head = null;
+  try { head = row && row.lossless ? JSON.parse(row.lossless) : null; } catch { head = null; }
+  if (!head) return json({ error: 'no lossless sound' }, 404);
+  const one = key ? head.parts.find((x) => x.key === key) : null;
+  if (key && !one) return json({ error: 'no such part' }, 404);
+  const name = `lossless/${uid}`;
+  const headers = new Headers({ 'content-type': one ? 'audio/flac' : 'application/octet-stream', 'cache-control': 'private, max-age=31536000, immutable' });
+  if (one) headers.set('x-gain', String(one.gain));
+  if (request.method === 'HEAD') { const o = await env.BUCKET.head(name); if (!o) return json({ error: 'no lossless sound' }, 404); headers.set('content-length', String(one ? one.bytes : o.size)); return new Response(null, { headers }); }
+  const obj = await env.BUCKET.get(name, one ? { range: { offset: one.at, length: one.bytes } } : undefined);
+  if (!obj) return json({ error: 'no lossless sound' }, 404);
+  headers.set('content-length', String(one ? one.bytes : obj.size));
+  return new Response(obj.body, { headers });
+}
+
+const hex = (buf) => [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
+
+// Body: { "hashes": [...] }. Which of those files are here.
+async function filesHave(request, env) {
+  const body = await request.json().catch(() => null);
+  const hashes = (body && Array.isArray(body.hashes) ? body.hashes : []).filter((h) => typeof h === 'string' && SHA.test(h)).slice(0, MAX_LIST);
+  const out = {};
+  for (let i = 0; i < hashes.length; i += 80) {
+    const part = hashes.slice(i, i + 80);
+    const { results } = await env.DB.prepare(`SELECT sha256 FROM files WHERE sha256 IN (${part.map(() => '?').join(',')})`).bind(...part).all();
+    for (const r of results) out[r.sha256] = true;
+  }
+  return json({ have: out });
+}
+
+// A sound file, under its SHA-256. What arrives must be that file: its hash is worked out here and compared.
+async function receiveFile(request, env, sha, name) {
+  if (Number(request.headers.get('content-length') || 0) > MAX_FILE) return json({ error: 'too large' }, 413);
+  const bytes = await request.arrayBuffer();
+  if (bytes.byteLength === 0) return json({ error: 'empty' }, 400);
+  if (bytes.byteLength > MAX_FILE) return json({ error: 'too large' }, 413);
+  if (hex(await crypto.subtle.digest('SHA-256', bytes)) !== sha) return json({ error: 'not the file its name says' }, 400);
+  const had = await env.DB.prepare('SELECT sha256 FROM files WHERE sha256 = ?').bind(sha).first();
+  if (!had) {
+    await env.BUCKET.put(`files/${sha}`, bytes, { httpMetadata: { contentType: 'application/octet-stream' } });
+    await env.DB.prepare('INSERT OR IGNORE INTO files (sha256, name, size, received_at) VALUES (?, ?, ?, ?)').bind(sha, String(name).slice(0, 200), bytes.byteLength, Date.now()).run();
+  }
+  return json({ ok: true, sha256: sha, size: bytes.byteLength, had: !!had });
+}
+
+async function serveFile(request, env, sha) {
+  const row = await env.DB.prepare('SELECT name, size FROM files WHERE sha256 = ?').bind(sha).first();
+  if (!row) return json({ error: 'no such file' }, 404);
+  const headers = new Headers({ 'content-type': 'application/octet-stream', 'cache-control': 'private, max-age=31536000, immutable', 'content-length': String(row.size), 'x-name': encodeURIComponent(row.name || '') });
+  if (request.method === 'HEAD') return new Response(null, { headers });
+  const obj = await env.BUCKET.get(`files/${sha}`);
+  if (!obj) return json({ error: 'no such file' }, 404);
+  return new Response(obj.body, { headers });
+}
+
+// Body: { "library": "<its sixteen digits>", "lines": [ { "k": "<the line's own name>", "t": ms, "a": "<what was done>", "u"?: uid, ... } ] }.
+// Each line is kept as it arrived. One sent again (the same k) is not kept twice, so the instrument can send from
+// where it last knew it had got to.
+export function cleanAction(line) {
+  if (!line || typeof line !== 'object' || Array.isArray(line)) return null;
+  if (typeof line.k !== 'string' || !ACTION_KEY.test(line.k)) return null;
+  if (typeof line.a !== 'string' || !/^[a-z_]{1,24}$/.test(line.a)) return null;
+  const t = Number(line.t);
+  if (!Number.isFinite(t) || t <= 0) return null;
+  const body = JSON.stringify(line);
+  if (body.length > 4000) return null;
+  return { k: line.k, t: Math.round(t), a: line.a, u: typeof line.u === 'string' && UID.test(line.u) ? line.u : '', body };
+}
+
+async function receiveActions(request, env) {
+  const text = await request.text();
+  if (text.length > MAX_JSON) return json({ error: 'too large' }, 413);
+  let body;
+  try { body = JSON.parse(text); } catch { return json({ error: 'not JSON' }, 400); }
+  if (!body || typeof body.library !== 'string' || !LIBRARY.test(body.library)) return json({ error: 'which library?' }, 400);
+  if (!Array.isArray(body.lines) || body.lines.length > MAX_ACTIONS) return json({ error: `lines: a list of ${MAX_ACTIONS} at most` }, 400);
+  const lines = body.lines.map(cleanAction).filter(Boolean);
+  const now = Date.now();
+  for (let i = 0; i < lines.length; i += 50) {
+    await env.DB.batch(lines.slice(i, i + 50).map((l) => env.DB.prepare(
+      'INSERT OR IGNORE INTO actions (library_id, k, t, a, u, body, received_at) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(body.library, l.k, l.t, l.a, l.u, l.body, now)));
+  }
+  return json({ ok: true, taken: lines.length, refused: body.lines.length - lines.length });
+}
+
+// ?library=&after=<ms>&limit=: a library's lines from after that time on, oldest first, each as it arrived.
+async function listActions(env, url) {
+  const library = url.searchParams.get('library') || '';
+  if (!LIBRARY.test(library)) return json({ error: 'which library?' }, 400);
+  const after = Number(url.searchParams.get('after')) || 0;
+  const limit = Math.max(1, Math.min(MAX_LIST, Number(url.searchParams.get('limit')) || 1000));
+  const { results } = await env.DB.prepare('SELECT body FROM actions WHERE library_id = ? AND t > ? ORDER BY t, k LIMIT ?').bind(library, after, limit).all();
+  const actions = results.map((r) => { try { return JSON.parse(r.body); } catch { return null; } }).filter(Boolean);
+  const total = await env.DB.prepare('SELECT COUNT(*) AS n FROM actions WHERE library_id = ?').bind(library).first();
+  return json({ actions, total: total ? total.n : 0 });
+}
+
+// Body: { "library", "at": ms, "app", "session": { ...the session file without its chips... } }. Kept if it differs
+// from the last one that library sent; each is its own file and none is written over.
+async function receiveSession(request, env) {
+  const text = await request.text();
+  if (text.length > MAX_SESSION) return json({ error: 'too large' }, 413);
+  let body;
+  try { body = JSON.parse(text); } catch { return json({ error: 'not JSON' }, 400); }
+  if (!body || typeof body.library !== 'string' || !LIBRARY.test(body.library)) return json({ error: 'which library?' }, 400);
+  if (!body.session || typeof body.session !== 'object' || Array.isArray(body.session)) return json({ error: 'no session' }, 400);
+  const at = Math.round(Number(body.at));
+  if (!Number.isFinite(at) || at <= 0) return json({ error: 'when?' }, 400);
+  const kept = JSON.stringify(body.session);
+  const hash = hex(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(kept))).slice(0, 32);
+  const last = await env.DB.prepare('SELECT at, hash FROM sessions WHERE library_id = ? ORDER BY at DESC LIMIT 1').bind(body.library).first();
+  if (last && last.hash === hash) return json({ ok: true, same: true, at: last.at, hash });
+  if (await env.DB.prepare('SELECT at FROM sessions WHERE library_id = ? AND at = ?').bind(body.library, at).first()) return json({ ok: true, same: true, at, hash });      // (that very one, sent again)
+  await env.BUCKET.put(`sessions/${body.library}/${at}.json`, kept, { httpMetadata: { contentType: 'application/json' } });
+  await env.DB.prepare('INSERT OR IGNORE INTO sessions (library_id, at, hash, size, app, received_at) VALUES (?, ?, ?, ?, ?, ?)')
+    .bind(body.library, at, hash, kept.length, String(body.app || '').slice(0, 80), Date.now()).run();
+  return json({ ok: true, at, hash, size: kept.length });
+}
+
+async function listSessions(env, url) {
+  const library = url.searchParams.get('library') || '';
+  if (!LIBRARY.test(library)) return json({ error: 'which library?' }, 400);
+  const { results } = await env.DB.prepare('SELECT at, hash, size, app FROM sessions WHERE library_id = ? ORDER BY at DESC LIMIT ?').bind(library, MAX_LIST).all();
+  return json({ sessions: results });
+}
+
+async function oneSession(env, library, at) {
+  const obj = await env.BUCKET.get(`sessions/${library}/${at}.json`);
+  if (!obj) return json({ error: 'no such session' }, 404);
+  return new Response(obj.body, { headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'private, max-age=31536000, immutable' } });
+}
+
 // Body: { "uids": [...] }. Answers which of them are here, and which have their clip, so SF-000
 // can catch up after time offline with one question. A snapshot removed here is "gone": known, not wanted again.
 async function have(request, env) {
@@ -317,8 +528,8 @@ async function have(request, env) {
   const out = {};
   for (let i = 0; i < uids.length; i += 80) {
     const part = uids.slice(i, i + 80);
-    const { results } = await env.DB.prepare(`SELECT uid, has_clip, ${stemsColumn()}, deleted_at FROM snapshots WHERE uid IN (${part.map(() => '?').join(',')})`).bind(...part).all();
-    for (const r of results) out[r.uid] = r.deleted_at ? { gone: true } : { clip: !!r.has_clip, stems: !!r.stems };
+    const { results } = await env.DB.prepare(`SELECT uid, has_clip, ${stemsColumn()}, ${losslessColumn()}, deleted_at FROM snapshots WHERE uid IN (${part.map(() => '?').join(',')})`).bind(...part).all();
+    for (const r of results) out[r.uid] = r.deleted_at ? { gone: true } : { clip: !!r.has_clip, stems: !!r.stems, lossless: !!r.lossless };
   }
   return json({ have: out });
 }
@@ -331,6 +542,7 @@ const LIST_COLUMNS = `uid, library_id, local_id, name, taken_at, received_at, ap
 
 // (a library whose table could not be given the column answers as one with no stems)
 const stemsColumn = () => (lacking.has('snapshots.stems') ? 'NULL AS stems' : 'stems');
+const losslessColumn = () => (lacking.has('snapshots.lossless') ? 'NULL AS lossless' : 'lossless');
 
 function shape(r) {
   const parse = (t, d) => { try { return t ? JSON.parse(t) : d; } catch { return d; } };
@@ -393,9 +605,9 @@ export function cleanTags(tags) {
 async function remove(env, uid, forget) {
   const res = forget
     ? await env.DB.prepare('DELETE FROM snapshots WHERE uid = ?').bind(uid).run()
-    : await env.DB.prepare(`UPDATE snapshots SET deleted_at = ?, has_clip = 0${lacking.has('snapshots.stems') ? '' : ', stems = NULL'} WHERE uid = ? AND deleted_at IS NULL`).bind(Date.now(), uid).run();
+    : await env.DB.prepare(`UPDATE snapshots SET deleted_at = ?, has_clip = 0${lacking.has('snapshots.stems') ? '' : ', stems = NULL'}${lacking.has('snapshots.lossless') ? '' : ', lossless = NULL'} WHERE uid = ? AND deleted_at IS NULL`).bind(Date.now(), uid).run();
   if (!res.meta.changes) return json({ error: 'not found' }, 404);
-  await env.BUCKET.delete([`snapshots/${uid}.json`, `clips/${uid}`, `stems/${uid}`]);
+  await env.BUCKET.delete([`snapshots/${uid}.json`, `clips/${uid}`, `stems/${uid}`, `lossless/${uid}`]);
   return json({ ok: true });
 }
 
@@ -673,7 +885,15 @@ async function stats(env) {
      FROM snapshots WHERE deleted_at IS NULL`).first();
   const defs = await env.DB.prepare('SELECT COUNT(*) AS n FROM defs').first();
   const st = await env.DB.prepare('SELECT COUNT(*) AS n, COALESCE(SUM(CASE WHEN load = 1 OR slot IS NOT NULL THEN 1 ELSE 0 END), 0) AS loaded FROM stacks WHERE deleted_at IS NULL').first();
-  return json({ ...all, defs: defs.n, stacks: st.n, in_tray: st.loaded });
+  // (what the instrument has sent for the library to be studied from: each counted, none of it listed here)
+  const count = async (sql) => { try { const r = await env.DB.prepare(sql).first(); return r ? r.n : 0; } catch { return 0; } };
+  const archive = {
+    lossless: lacking.has('snapshots.lossless') ? 0 : await count('SELECT COUNT(*) AS n FROM snapshots WHERE deleted_at IS NULL AND lossless IS NOT NULL'),
+    files: await count('SELECT COUNT(*) AS n FROM files'),
+    actions: await count('SELECT COUNT(*) AS n FROM actions'),
+    sessions: await count('SELECT COUNT(*) AS n FROM sessions'),
+  };
+  return json({ ...all, defs: defs.n, stacks: st.n, in_tray: st.loaded, archive });
 }
 
 async function serveClip(request, env, uid) {
