@@ -7,7 +7,7 @@ import { SCHEMA, ADDED } from './schema.js';
 const MAX_JSON = 2 * 1024 * 1024;       // a snapshot with the definitions it names
 const MAX_CLIP = 8 * 1024 * 1024;       // four bars of Ogg are a few hundred kilobytes
 const MAX_STEMS = 48 * 1024 * 1024;     // a snapshot's stems: a few bars of Ogg for each lane, the returns and the drum bus
-const MAX_LOSSLESS = 96 * 1024 * 1024;  // the same bars without loss: the mix and each stem as FLAC
+const MAX_LOSSLESS = 64 * 1024 * 1024;  // the same bars without loss: the mix and each stem as FLAC (held whole while its head is read)
 const MAX_FILE = 96 * 1024 * 1024;      // a sample or an impulse response
 const MAX_SESSION = 4 * 1024 * 1024;    // a session without its chips
 const MAX_ACTIONS = 1000;               // lines of the instrument's log in one message
@@ -418,19 +418,32 @@ async function filesHave(request, env) {
   return json({ have: out });
 }
 
-// A sound file, under its SHA-256. What arrives must be that file: its hash is worked out here and compared.
+// A sound file, under its SHA-256. What arrives must be that file: the store is given the hash and works it out
+// itself as the file goes in, and keeps nothing that does not match. (So the file is passed straight through: it is
+// never held here whole, and hashing it costs this Worker no time of its own.)
 async function receiveFile(request, env, sha, name) {
-  if (Number(request.headers.get('content-length') || 0) > MAX_FILE) return json({ error: 'too large' }, 413);
-  const bytes = await request.arrayBuffer();
-  if (bytes.byteLength === 0) return json({ error: 'empty' }, 400);
-  if (bytes.byteLength > MAX_FILE) return json({ error: 'too large' }, 413);
-  if (hex(await crypto.subtle.digest('SHA-256', bytes)) !== sha) return json({ error: 'not the file its name says' }, 400);
-  const had = await env.DB.prepare('SELECT sha256 FROM files WHERE sha256 = ?').bind(sha).first();
-  if (!had) {
-    await env.BUCKET.put(`files/${sha}`, bytes, { httpMetadata: { contentType: 'application/octet-stream' } });
-    await env.DB.prepare('INSERT OR IGNORE INTO files (sha256, name, size, received_at) VALUES (?, ?, ?, ?)').bind(sha, String(name).slice(0, 200), bytes.byteLength, Date.now()).run();
+  const length = Number(request.headers.get('content-length') || 0);
+  if (length > MAX_FILE) return json({ error: 'too large' }, 413);
+  const had = await env.DB.prepare('SELECT size FROM files WHERE sha256 = ?').bind(sha).first();
+  if (had) return json({ ok: true, sha256: sha, size: had.size, had: true });
+  // (a body with its length said is passed through as it comes; one without is read whole first, as the store needs a length)
+  let body = request.body;
+  if (!length || !body) {
+    body = await request.arrayBuffer();
+    if (body.byteLength === 0) return json({ error: 'empty' }, 400);
+    if (body.byteLength > MAX_FILE) return json({ error: 'too large' }, 413);
   }
-  return json({ ok: true, sha256: sha, size: bytes.byteLength, had: !!had });
+  let kept;
+  try {
+    kept = await env.BUCKET.put(`files/${sha}`, body, { sha256: sha, httpMetadata: { contentType: 'application/octet-stream' } });
+  } catch (e) {
+    // (the store turned it down for its hash: not that file. Anything else is the store's trouble, and is said as such, to be sent again)
+    if (/checksum|sha-?256|digest|hash/i.test(String(e && e.message))) return json({ error: 'not the file its name says' }, 400);
+    return json({ error: 'the store did not take it' }, 503);
+  }
+  if (!kept) return json({ error: 'the store did not take it' }, 503);
+  await env.DB.prepare('INSERT OR IGNORE INTO files (sha256, name, size, received_at) VALUES (?, ?, ?, ?)').bind(sha, String(name).slice(0, 200), kept.size, Date.now()).run();
+  return json({ ok: true, sha256: sha, size: kept.size, had: false });
 }
 
 async function serveFile(request, env, sha) {
@@ -547,9 +560,11 @@ const losslessColumn = () => (lacking.has('snapshots.lossless') ? 'NULL AS lossl
 function shape(r) {
   const parse = (t, d) => { try { return t ? JSON.parse(t) : d; } catch { return d; } };
   const stems = parse(r.stems, null);
+  const lossless = parse(r.lossless, null);
   return {
     ...r,
     stems: stems && Array.isArray(stems.stems) ? stems.stems.map((x) => x.key) : [],      // (the keys of the stems it has: a lane's, "dub", "space", "bus")
+    lossless: lossless && Array.isArray(lossless.parts) ? lossless.parts.map((x) => x.key) : [],      // (and of its sound without loss: "mix", then the same keys)
     has_profile: !!r.has_profile, has_clip: !!r.has_clip,
     profile: parse(r.profile, null), fill: parse(r.fill, []),
     lanes: r.lanes ? r.lanes.split(',') : [], effects: r.effects ? r.effects.split(',') : [],
@@ -563,13 +578,13 @@ async function list(env, url) {
   const limit = Math.max(1, Math.min(MAX_LIST, Number(url.searchParams.get('limit')) || MAX_LIST));
   const offset = Math.max(0, Number(url.searchParams.get('offset')) || 0);
   const { results } = await env.DB.prepare(
-    `SELECT ${LIST_COLUMNS}, ${stemsColumn()} FROM snapshots WHERE deleted_at IS NULL ORDER BY COALESCE(taken_at, received_at) DESC, uid LIMIT ? OFFSET ?`)
+    `SELECT ${LIST_COLUMNS}, ${stemsColumn()}, ${losslessColumn()} FROM snapshots WHERE deleted_at IS NULL ORDER BY COALESCE(taken_at, received_at) DESC, uid LIMIT ? OFFSET ?`)
     .bind(limit, offset).all();
   return json({ snapshots: results.map(shape) });
 }
 
 async function one(env, uid) {
-  const row = await env.DB.prepare(`SELECT ${LIST_COLUMNS}, ${stemsColumn()}, prints, json_size FROM snapshots WHERE uid = ? AND deleted_at IS NULL`).bind(uid).first();
+  const row = await env.DB.prepare(`SELECT ${LIST_COLUMNS}, ${stemsColumn()}, ${losslessColumn()}, prints, json_size FROM snapshots WHERE uid = ? AND deleted_at IS NULL`).bind(uid).first();
   if (!row) return json({ error: 'not found' }, 404);
   const obj = await env.BUCKET.get(`snapshots/${uid}.json`);
   return json({ ...shape(row), prints: row.prints ? row.prints.split(',') : [], snapshot: obj ? await obj.json() : null });

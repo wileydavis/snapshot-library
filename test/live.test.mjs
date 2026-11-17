@@ -282,6 +282,11 @@ if (!process.env.SEED) await j('/api/stacks/testlearn001?forget=1', 'DELETE');
   assert.equal(new TextDecoder().decode(await one.arrayBuffer()), 'fLaC-bass', 'one part of it, by its key');
   assert.equal((await fetch(`${BASE}/api/lossless/${u[0]}?key=lead`)).status, 404);
   assert.equal((await fetch(`${BASE}/api/lossless/${u[1]}`)).status, 404, 'one with none says so');
+  // and the library says which of its snapshots have it, in its list and one by one
+  const listed = (await (await fetch(`${BASE}/api/snapshots`)).json()).snapshots;
+  assert.deepEqual(listed.find((x) => x.uid === u[0]).lossless, ['mix', 'kick', 'bass']);
+  assert.deepEqual(listed.find((x) => x.uid === u[1]).lossless, []);
+  assert.deepEqual((await (await fetch(`${BASE}/api/snapshots/${u[0]}`)).json()).lossless, ['mix', 'kick', 'bass']);
 }
 // a sound file a snapshot needs: kept under its SHA-256, and only if it is the file that name says
 {

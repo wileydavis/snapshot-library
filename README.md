@@ -150,6 +150,11 @@ R2 bucket snapshot-library
   clips/<uid>              its four bars (Ogg Vorbis, a few hundred kilobytes)
   stems/<uid>              the same bars lane by lane, as SF-000 keeps them (one file: each lane, the two
                            returns and the drum bus, each an Ogg; about a megabyte)
+  lossless/<uid>           the same bars without loss, as SF-000 keeps them (one file: the output and each
+                           stem, each a 24-bit FLAC; about ten megabytes). Not played here: to be studied
+  files/<sha256>           a sound file the rig was given (a sample, an impulse response), under its hash
+  sessions/<library>/<at>.json   a library's session without its chips (its knobs, stacks, modules and
+                           arrangements, and which chip each of its numbers is), each time it changed
 D1 database snapshot-library
   snapshots                an index for the page: name, time, the profile's measures, lanes, effects, tags, notes
   defs                     every definition a snapshot names (what each stored value was a position of)
@@ -157,7 +162,17 @@ D1 database snapshot-library
                            parts of the rig it does not take), its rule if it fills itself, and for SF-000:
                            its place on the module, a macro knob's moves and depth, whether it is in the
                            list for the instrument's library screen
+  files                    which sound files are here: hash, the name each first came with, size
+  actions                  the instrument's log: a row a line, as it arrived (what was done with which
+                           chip, and when), under the line's own name so that none is kept twice
+  sessions                 which sessions are here: library, time, hash, size, the build that wrote it
 ```
+
+**To be studied from.** The lossless sound, the sound files, the log and the sessions are what
+SF-000 sends so that the library can be studied away from the instrument: by a program of its
+own, on another machine, which fetches from here and puts back what it finds. Nothing on this
+page uses them yet. They are only ever added to: a line of the log, a session and a sound file,
+once here, are never changed (removing a snapshot removes its lossless sound with its clip).
 
 A stack only names its chips. A snapshot is never copied into one and never changed by one.
 
@@ -219,8 +234,17 @@ snapshot's own id.
 | `PUT /api/clips/<uid>` | The clip's bytes. The snapshot has to be here first. |
 | `PUT /api/stems/<uid>` | The snapshot's stems, SF-000's file as it is (`SF0STEMS1`, a line of JSON, the stems). Refused if it is not one, or is cut short. |
 | `GET /api/stems/<uid>` | The file. With `?key=bass`, that one stem (an Ogg file). |
-| `POST /api/have` | `{ "uids": [...] }` → `{ "have": { "<uid>": { "clip": true, "stems": true } } }`. What is already here, for catching up after time offline. One removed here answers `{ "gone": true }`: known, not wanted again. |
-| `GET /api/snapshots` | The list the page draws from, newest first. |
+| `PUT /api/lossless/<uid>` | The snapshot's sound without loss, SF-000's file as it is (`SF0LOSSLESS1`, a line of JSON, then each part a FLAC file). The snapshot has to be here first. Refused if it is not one, or is cut short. 64 MB at most. |
+| `GET /api/lossless/<uid>` | The file. With `?key=mix` (or a stem's key), that one part, a FLAC file; `x-gain` is what it was multiplied by before it was written (divide by it). |
+| `POST /api/files/have` | `{ "hashes": [...] }` → `{ "have": { "<sha256>": true } }`. |
+| `PUT /api/files/<sha256>?name=` | A sound file. Kept only if it is the file that hash says (the store works the hash out as it goes in). Sent again: kept once. 96 MB at most. |
+| `GET /api/files/<sha256>` | The file; `x-name` is the name it first came with. |
+| `POST /api/actions` | `{ "library": "<sixteen hex>", "lines": [{ "k", "t", "a", "u"?, ... }] }`, a thousand lines at most. Each line is kept as it arrived, once (by `k`). Answers `{ ok, taken, refused }`. |
+| `GET /api/actions?library=&after=<ms>&limit=` | That library's lines from after that time, oldest first, and `total`. |
+| `POST /api/sessions` | `{ "library", "at": ms, "app", "session": {...} }`. Kept if it differs from the last one that library sent (`same: true` if not). |
+| `GET /api/sessions?library=` | What is here for it, newest first: `{ at, hash, size, app }`. `GET /api/sessions/<library>/<at>`: that session as it was sent. |
+| `POST /api/have` | `{ "uids": [...] }` → `{ "have": { "<uid>": { "clip": true, "stems": true, "lossless": true } } }`. What is already here, for catching up after time offline. One removed here answers `{ "gone": true }`: known, not wanted again. |
+| `GET /api/snapshots` | The list the page draws from, newest first. Each says which stems it has (`stems`: their keys) and which parts of its sound without loss (`lossless`). |
 | `GET /api/snapshots/<uid>` | One, with the snapshot whole under `snapshot`. |
 | `PATCH /api/snapshots/<uid>` | `{ "name": "...", "tags": [...], "notes": "..." }`, any of them. A name given here stands until SF-000 renames the snapshot there: the last to rename it has it. |
 | `POST /api/tags` | `{ "uids": [...], "add": [...], "remove": [...] }`: tags on many at once. |
@@ -232,7 +256,7 @@ snapshot's own id.
 | `POST /api/stacks` | `{ "id"?, "name", "kind": "stack" \| "learn" \| "song" \| "rule" (\| "macro", from before the two kinds: a stack), "items": [uid or { "u": uid, "off"?: [parts] } or, in a song, { "u": uid, "bars", "morph" }], "rule"?, "depth"?, "slot"?, "load"?, "extra"? }`. `off`: the parts of the rig that chip does not take (a lane's key, `returns`, `bus`, `master`). A `learn` is a macro knob: no items, its moves in `extra.links` as `[ { c: control id, d: share of its travel } ]`. With an `id` (8 to 24 letters and digits), making it twice is one stack. |
 | `GET /api/stacks/<id>`, `PATCH`, `DELETE` | One stack; any of those fields changed (`items` is the whole list, in order); removed (kept, and put back with `PATCH { "restore": true }`). `slot` is its place on the module, 1 to 16: 1 to 4 take a macro knob; 5 to 12, 14 and 15 a stack of chips; 13 and 16 nothing. The other kind is refused (400), and a song or a stack that fills itself goes on none. A place holds one thing: giving a `slot` takes it from the one that had it. |
 | `GET /api/load` | **What SF-000 takes at LOAD**: `{ "load": 2, "macro_places": 4, "stack_places": [5, 6, 7, 8, 9, 10, 11, 12, 14, 15], "knobs": [ { id, slot, kind, name, depth, uids, off?, links? } ], "stacks": [ { id, name, kind, uids, parts? } ], "chips": { "<uid>": { name, clip, tags } } }`. `knobs` is the module: a macro knob (`kind` `learn`, its `links`) on 1 to 4, a stack knob (`uids` in order; `off`, one list for each, where any chip leaves a part out) on a stack place. `stacks` are those marked for the instrument's library screen. |
-| `GET /api/stats` | Counts. |
+| `GET /api/stats` | Counts. `archive`: how many snapshots have lossless sound, and how many sound files, lines of the log and sessions are here. |
 
 ## Local development
 
@@ -285,9 +309,10 @@ changed or dropped, so a deploy cannot take a snapshot, a tag or a stack with it
   built: for now a stack knob taken off the module stays in the rack, to be put back.
 - A chip's keys are not kept across a reload until the chip is in a stack of your own.
 - Stems for snapshots taken before SF-000 kept them (its fortieth build): those play whole.
-- **Putting chips away from the instrument.** A snapshot can name a sample that is only on the
-  Mac. Samples have to be kept here (by their SHA-256, which the session already has) before the
-  instrument can safely let go of a chip.
+- **Putting chips away from the instrument.** The samples a snapshot names are kept here now
+  (by their SHA-256), but SF-000 does not yet fetch one back, so it cannot safely let go of a chip.
+- **The program that studies the library.** What it needs is kept (lossless sound, sound files,
+  the log, the sessions); the program itself, and a place here for what it finds, are not built.
 - A song's parts are set one at a time on the chip's strip: no row of bars to drag.
 - The moods' places are fixed in `stacks.js`: no page to move them on. MOOD FROM THEM is the way
   to make your own.
